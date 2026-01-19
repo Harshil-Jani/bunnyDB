@@ -423,7 +423,7 @@ func (a *Activities) CopyTable(ctx context.Context, input *CopyTableInput) error
 
 	// Build query
 	srcTable := input.TableMapping.FullSourceName()
-	dstTable := input.TableMapping.FullDestinationName()
+	_ = input.TableMapping.FullDestinationName() // dstTable used in COPY TO destination
 
 	// Get columns (excluding any excluded columns)
 	columns := "*"
