@@ -218,6 +218,14 @@ func (h *Handler) CreateMirror(w http.ResponseWriter, r *http.Request) {
 		slog.String("mirror", req.Name),
 		slog.String("workflowID", we.GetID()))
 
+	// Log mirror creation
+	h.WriteMirrorLog(ctx, req.Name, "INFO", "Mirror created", map[string]interface{}{
+		"workflow_id":      we.GetID(),
+		"source_peer":      req.SourcePeer,
+		"destination_peer": req.DestinationPeer,
+		"table_count":      len(req.TableMappings),
+	})
+
 	writeJSON(w, http.StatusCreated, MirrorResponse{
 		Name:       req.Name,
 		WorkflowID: we.GetID(),
@@ -364,19 +372,48 @@ func (h *Handler) DeleteMirror(w http.ResponseWriter, r *http.Request) {
 
 	workflowID := fmt.Sprintf("cdc-%s", mirrorName)
 
+	// Try to terminate the workflow (may fail if workflow doesn't exist)
 	err := h.TemporalClient.SignalWorkflow(ctx, workflowID, "", workflows.SignalTerminate, model.SignalPayload{
 		Signal: model.TerminateSignal,
 	})
 	if err != nil {
-		slog.Error("failed to signal workflow", slog.Any("error", err))
-		writeError(w, http.StatusInternalServerError, "failed to terminate mirror")
+		slog.Warn("failed to signal workflow for termination (may not exist)", slog.Any("error", err))
+		// Try to cancel the workflow directly
+		err = h.TemporalClient.CancelWorkflow(ctx, workflowID, "")
+		if err != nil {
+			slog.Warn("failed to cancel workflow", slog.Any("error", err))
+		}
+	}
+
+	// Always clean up catalog entries
+	_, err = h.CatalogPool.Exec(ctx, `DELETE FROM bunny_stats.table_sync_status WHERE mirror_name = $1`, mirrorName)
+	if err != nil {
+		slog.Warn("failed to delete table sync status", slog.Any("error", err))
+	}
+
+	_, err = h.CatalogPool.Exec(ctx, `DELETE FROM bunny_internal.fk_definitions WHERE mirror_name = $1`, mirrorName)
+	if err != nil {
+		slog.Warn("failed to delete fk definitions", slog.Any("error", err))
+	}
+
+	_, err = h.CatalogPool.Exec(ctx, `DELETE FROM bunny_internal.index_definitions WHERE mirror_name = $1`, mirrorName)
+	if err != nil {
+		slog.Warn("failed to delete index definitions", slog.Any("error", err))
+	}
+
+	_, err = h.CatalogPool.Exec(ctx, `DELETE FROM bunny_internal.mirror_state WHERE mirror_name = $1`, mirrorName)
+	if err != nil {
+		slog.Error("failed to delete mirror state", slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, "failed to delete mirror")
 		return
 	}
 
+	slog.Info("deleted mirror", slog.String("mirror", mirrorName))
+
 	writeJSON(w, http.StatusOK, MirrorResponse{
 		Name:    mirrorName,
-		Status:  "TERMINATING",
-		Message: "terminate signal sent",
+		Status:  "DELETED",
+		Message: "mirror deleted",
 	})
 }
 
@@ -857,6 +894,83 @@ func (h *Handler) TestPeer(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
+// Mirror Logs
+// ============================================================================
+
+// LogEntry represents a log entry
+type LogEntry struct {
+	ID        int64      `json:"id"`
+	Level     string     `json:"level"`
+	Message   string     `json:"message"`
+	Details   *string    `json:"details,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// GetMirrorLogs returns logs for a specific mirror
+func (h *Handler) GetMirrorLogs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	mirrorName := r.PathValue("name")
+
+	if mirrorName == "" {
+		writeError(w, http.StatusBadRequest, "mirror name is required")
+		return
+	}
+
+	// Get limit from query params (default 100)
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := fmt.Sscanf(l, "%d", &limit); err == nil && parsed > 0 {
+			if limit > 500 {
+				limit = 500
+			}
+		}
+	}
+
+	rows, err := h.CatalogPool.Query(ctx, `
+		SELECT id, log_level, message, details::text, created_at
+		FROM bunny_stats.mirror_logs
+		WHERE mirror_name = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, mirrorName, limit)
+	if err != nil {
+		slog.Error("failed to fetch logs", slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, "failed to fetch logs")
+		return
+	}
+	defer rows.Close()
+
+	logs := []LogEntry{}
+	for rows.Next() {
+		var log LogEntry
+		err := rows.Scan(&log.ID, &log.Level, &log.Message, &log.Details, &log.CreatedAt)
+		if err != nil {
+			slog.Error("failed to scan log row", slog.Any("error", err))
+			continue
+		}
+		logs = append(logs, log)
+	}
+
+	writeJSON(w, http.StatusOK, logs)
+}
+
+// WriteMirrorLog writes a log entry for a mirror (internal helper)
+func (h *Handler) WriteMirrorLog(ctx context.Context, mirrorName, level, message string, details map[string]interface{}) {
+	var detailsJSON []byte
+	if details != nil {
+		detailsJSON, _ = json.Marshal(details)
+	}
+
+	_, err := h.CatalogPool.Exec(ctx, `
+		INSERT INTO bunny_stats.mirror_logs (mirror_name, log_level, message, details)
+		VALUES ($1, $2, $3, $4)
+	`, mirrorName, level, message, detailsJSON)
+	if err != nil {
+		slog.Error("failed to write mirror log", slog.Any("error", err))
+	}
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 
@@ -919,6 +1033,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/mirrors/{name}/resync/{table}", corsMiddleware(h.ResyncMirror))
 	mux.HandleFunc("POST /v1/mirrors/{name}/retry", corsMiddleware(h.RetryMirror))
 	mux.HandleFunc("POST /v1/mirrors/{name}/sync-schema", corsMiddleware(h.SyncSchema))
+	mux.HandleFunc("GET /v1/mirrors/{name}/logs", corsMiddleware(h.GetMirrorLogs))
 
 	// Health check
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

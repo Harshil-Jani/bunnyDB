@@ -18,7 +18,19 @@ import {
   Settings,
   ChevronDown,
   ChevronUp,
+  FileText,
+  Info,
+  AlertTriangle,
+  XCircle,
 } from 'lucide-react';
+
+interface LogEntry {
+  id: number;
+  level: string;
+  message: string;
+  details?: string;
+  created_at: string;
+}
 
 interface TableStatus {
   table_name: string;
@@ -48,11 +60,13 @@ export default function MirrorDetailPage() {
   const mirrorName = params.name as string;
 
   const [mirror, setMirror] = useState<MirrorDetails | null>(null);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [activeTab, setActiveTab] = useState<'tables' | 'logs'>('tables');
 
   const fetchMirrorDetails = useCallback(async () => {
     try {
@@ -71,6 +85,18 @@ export default function MirrorDetailPage() {
       setError('Failed to connect to BunnyDB API');
     } finally {
       setLoading(false);
+    }
+  }, [mirrorName]);
+
+  const fetchLogs = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/logs?limit=100`);
+      if (res.ok) {
+        const data = await res.json();
+        setLogs(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch logs:', err);
     }
   }, [mirrorName]);
 
@@ -107,9 +133,14 @@ export default function MirrorDetailPage() {
 
   useEffect(() => {
     fetchMirrorDetails();
-    const interval = setInterval(fetchMirrorDetails, 5000);
-    return () => clearInterval(interval);
-  }, [fetchMirrorDetails]);
+    fetchLogs();
+    const mirrorInterval = setInterval(fetchMirrorDetails, 5000);
+    const logsInterval = setInterval(fetchLogs, 10000);
+    return () => {
+      clearInterval(mirrorInterval);
+      clearInterval(logsInterval);
+    };
+  }, [fetchMirrorDetails, fetchLogs]);
 
   const toggleTableExpanded = (tableName: string) => {
     setExpandedTables((prev) => {
@@ -172,6 +203,32 @@ export default function MirrorDetailPage() {
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return 'Never';
     return new Date(dateStr).toLocaleString();
+  };
+
+  const getLogLevelIcon = (level: string) => {
+    switch (level?.toUpperCase()) {
+      case 'ERROR':
+        return <XCircle className="w-4 h-4 text-red-500" />;
+      case 'WARN':
+        return <AlertTriangle className="w-4 h-4 text-yellow-500" />;
+      case 'INFO':
+        return <Info className="w-4 h-4 text-blue-500" />;
+      default:
+        return <Info className="w-4 h-4 text-gray-400" />;
+    }
+  };
+
+  const getLogLevelColor = (level: string) => {
+    switch (level?.toUpperCase()) {
+      case 'ERROR':
+        return 'bg-red-50 border-red-200';
+      case 'WARN':
+        return 'bg-yellow-50 border-yellow-200';
+      case 'INFO':
+        return 'bg-blue-50 border-blue-200';
+      default:
+        return 'bg-gray-50 border-gray-200';
+    }
   };
 
   if (loading) {
@@ -355,89 +412,159 @@ export default function MirrorDetailPage() {
         </div>
       </div>
 
-      {/* Tables */}
+      {/* Tabs */}
       <div className="bg-white rounded-lg shadow">
-        <div className="p-4 border-b">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Table className="w-5 h-5" />
-            Table Status
-          </h2>
+        <div className="border-b">
+          <nav className="flex">
+            <button
+              onClick={() => setActiveTab('tables')}
+              className={`px-6 py-4 text-sm font-medium border-b-2 ${
+                activeTab === 'tables'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Table className="w-4 h-4" />
+                Tables ({mirror.tables?.length || 0})
+              </div>
+            </button>
+            <button
+              onClick={() => { setActiveTab('logs'); fetchLogs(); }}
+              className={`px-6 py-4 text-sm font-medium border-b-2 ${
+                activeTab === 'logs'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4" />
+                Logs ({logs.length})
+              </div>
+            </button>
+          </nav>
         </div>
-        {mirror.tables && mirror.tables.length > 0 ? (
-          <div className="divide-y">
-            {mirror.tables.map((table) => (
-              <div key={table.table_name} className="p-4">
-                <div
-                  className="flex items-center justify-between cursor-pointer"
-                  onClick={() => toggleTableExpanded(table.table_name)}
-                >
-                  <div className="flex items-center gap-3">
-                    {expandedTables.has(table.table_name) ? (
-                      <ChevronUp className="w-4 h-4 text-gray-400" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4 text-gray-400" />
-                    )}
-                    <div>
-                      <span className="font-mono text-sm font-medium">{table.table_name}</span>
-                      <p className="text-xs text-gray-500">
-                        {formatNumber(table.rows_synced)} rows synced
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(table.status)}`}>
-                      {table.status}
-                    </span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        performAction('resync', table.table_name);
-                      }}
-                      disabled={actionLoading === `resync-${table.table_name}`}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50"
-                      title="Resync this table"
+
+        {/* Tables Tab */}
+        {activeTab === 'tables' && (
+          <>
+            {mirror.tables && mirror.tables.length > 0 ? (
+              <div className="divide-y">
+                {mirror.tables.map((table) => (
+                  <div key={table.table_name} className="p-4">
+                    <div
+                      className="flex items-center justify-between cursor-pointer"
+                      onClick={() => toggleTableExpanded(table.table_name)}
                     >
-                      {actionLoading === `resync-${table.table_name}` ? (
-                        <RefreshCw className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <RefreshCw className="w-3 h-3" />
+                      <div className="flex items-center gap-3">
+                        {expandedTables.has(table.table_name) ? (
+                          <ChevronUp className="w-4 h-4 text-gray-400" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4 text-gray-400" />
+                        )}
+                        <div>
+                          <span className="font-mono text-sm font-medium">{table.table_name}</span>
+                          <p className="text-xs text-gray-500">
+                            {formatNumber(table.rows_synced)} rows synced
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(table.status)}`}>
+                          {table.status}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            performAction('resync', table.table_name);
+                          }}
+                          disabled={actionLoading === `resync-${table.table_name}`}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50"
+                          title="Resync this table"
+                        >
+                          {actionLoading === `resync-${table.table_name}` ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-3 h-3" />
+                          )}
+                          Resync
+                        </button>
+                      </div>
+                    </div>
+                    {expandedTables.has(table.table_name) && (
+                      <div className="mt-4 ml-7 p-3 bg-gray-50 rounded-lg">
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-500">Status:</span>
+                            <span className="ml-2 font-medium">{table.status}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Rows Synced:</span>
+                            <span className="ml-2 font-medium font-mono">{formatNumber(table.rows_synced)}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Last Synced:</span>
+                            <span className="ml-2 font-medium">{formatDate(table.last_synced_at)}</span>
+                          </div>
+                          {table.error_message && (
+                            <div className="col-span-2">
+                              <span className="text-red-500">Error:</span>
+                              <span className="ml-2 text-red-700">{table.error_message}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-8 text-center text-gray-500">
+                <Table className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                <p>No table status information available yet.</p>
+                <p className="text-sm mt-1">Table status will appear once the mirror starts syncing.</p>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Logs Tab */}
+        {activeTab === 'logs' && (
+          <div className="divide-y max-h-[600px] overflow-y-auto">
+            {logs.length > 0 ? (
+              logs.map((log) => (
+                <div key={log.id} className={`p-4 ${getLogLevelColor(log.level)} border-l-4`}>
+                  <div className="flex items-start gap-3">
+                    {getLogLevelIcon(log.level)}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="font-medium text-gray-900">{log.message}</span>
+                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                          {formatDate(log.created_at)}
+                        </span>
+                      </div>
+                      {log.details && (
+                        <pre className="mt-2 text-xs text-gray-600 bg-white bg-opacity-50 rounded p-2 overflow-x-auto">
+                          {(() => {
+                            try {
+                              return JSON.stringify(JSON.parse(log.details), null, 2);
+                            } catch {
+                              return log.details;
+                            }
+                          })()}
+                        </pre>
                       )}
-                      Resync
-                    </button>
+                    </div>
                   </div>
                 </div>
-                {expandedTables.has(table.table_name) && (
-                  <div className="mt-4 ml-7 p-3 bg-gray-50 rounded-lg">
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <span className="text-gray-500">Status:</span>
-                        <span className="ml-2 font-medium">{table.status}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Rows Synced:</span>
-                        <span className="ml-2 font-medium font-mono">{formatNumber(table.rows_synced)}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Last Synced:</span>
-                        <span className="ml-2 font-medium">{formatDate(table.last_synced_at)}</span>
-                      </div>
-                      {table.error_message && (
-                        <div className="col-span-2">
-                          <span className="text-red-500">Error:</span>
-                          <span className="ml-2 text-red-700">{table.error_message}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
+              ))
+            ) : (
+              <div className="p-8 text-center text-gray-500">
+                <FileText className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                <p>No logs available yet.</p>
+                <p className="text-sm mt-1">Logs will appear as the mirror performs operations.</p>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="p-8 text-center text-gray-500">
-            <Table className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-            <p>No table status information available yet.</p>
-            <p className="text-sm mt-1">Table status will appear once the mirror starts syncing.</p>
+            )}
           </div>
         )}
       </div>

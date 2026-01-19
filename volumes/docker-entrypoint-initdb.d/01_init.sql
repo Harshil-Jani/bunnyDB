@@ -146,6 +146,16 @@ CREATE TABLE IF NOT EXISTS bunny_stats.table_sync_status (
     UNIQUE(mirror_name, table_name)
 );
 
+-- Mirror logs: stores activity logs per mirror
+CREATE TABLE IF NOT EXISTS bunny_stats.mirror_logs (
+    id BIGSERIAL PRIMARY KEY,
+    mirror_name VARCHAR(255) NOT NULL,
+    log_level VARCHAR(20) NOT NULL DEFAULT 'INFO',  -- DEBUG, INFO, WARN, ERROR
+    message TEXT NOT NULL,
+    details JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_table_mappings_mirror ON bunny_internal.table_mappings(mirror_id);
 CREATE INDEX IF NOT EXISTS idx_cdc_batches_mirror ON bunny_stats.cdc_batches(mirror_name);
@@ -153,6 +163,7 @@ CREATE INDEX IF NOT EXISTS idx_schema_deltas_mirror ON bunny_stats.schema_deltas
 CREATE INDEX IF NOT EXISTS idx_table_sync_status_mirror ON bunny_stats.table_sync_status(mirror_name);
 CREATE INDEX IF NOT EXISTS idx_index_definitions_mirror ON bunny_internal.index_definitions(mirror_name, table_name);
 CREATE INDEX IF NOT EXISTS idx_fk_definitions_mirror ON bunny_internal.fk_definitions(mirror_name, source_table);
+CREATE INDEX IF NOT EXISTS idx_mirror_logs_mirror ON bunny_stats.mirror_logs(mirror_name, created_at DESC);
 
 -- Functions
 

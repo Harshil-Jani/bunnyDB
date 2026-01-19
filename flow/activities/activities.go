@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -49,6 +50,22 @@ func NewActivities(catalogPool *pgxpool.Pool, config *shared.Config) *Activities
 	}
 }
 
+// WriteLog writes a log entry to the mirror_logs table
+func (a *Activities) WriteLog(ctx context.Context, mirrorName, level, message string, details map[string]interface{}) {
+	var detailsJSON []byte
+	if details != nil {
+		detailsJSON, _ = json.Marshal(details)
+	}
+
+	_, err := a.CatalogPool.Exec(ctx, `
+		INSERT INTO bunny_stats.mirror_logs (mirror_name, log_level, message, details)
+		VALUES ($1, $2, $3, $4)
+	`, mirrorName, level, message, detailsJSON)
+	if err != nil {
+		slog.Error("failed to write mirror log", slog.Any("error", err))
+	}
+}
+
 // ============================================================================
 // Setup Activities
 // ============================================================================
@@ -76,21 +93,45 @@ func (a *Activities) SetupMirror(ctx context.Context, input *SetupInput) (*Setup
 	logger := slog.Default().With(slog.String("mirror", input.MirrorName))
 	logger.Info("setting up mirror")
 
+	a.WriteLog(ctx, input.MirrorName, "INFO", "Starting mirror setup", map[string]interface{}{
+		"source_peer":      input.SourcePeer,
+		"destination_peer": input.DestinationPeer,
+		"table_count":      len(input.TableMappings),
+	})
+
 	// Get source peer config from catalog
 	srcConfig, err := a.getPeerConfig(ctx, input.SourcePeer)
 	if err != nil {
+		a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to get source peer config", map[string]interface{}{
+			"error": err.Error(),
+			"peer":  input.SourcePeer,
+		})
 		return nil, fmt.Errorf("failed to get source peer config: %w", err)
 	}
+
+	a.WriteLog(ctx, input.MirrorName, "INFO", "Connecting to source database", map[string]interface{}{
+		"host":     srcConfig.Host,
+		"port":     srcConfig.Port,
+		"database": srcConfig.Database,
+	})
 
 	// Connect to source
 	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
 	if err != nil {
+		a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to connect to source", map[string]interface{}{
+			"error": err.Error(),
+		})
 		return nil, fmt.Errorf("failed to connect to source: %w", err)
 	}
 	defer srcConn.Close()
 
+	a.WriteLog(ctx, input.MirrorName, "INFO", "Connected to source, setting up replication connection", nil)
+
 	// Set up replication connection
 	if err := srcConn.SetupReplConn(ctx); err != nil {
+		a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to setup replication connection", map[string]interface{}{
+			"error": err.Error(),
+		})
 		return nil, fmt.Errorf("failed to setup replication connection: %w", err)
 	}
 
@@ -104,21 +145,39 @@ func (a *Activities) SetupMirror(ctx context.Context, input *SetupInput) (*Setup
 		// Get table OID
 		oid, err := srcConn.GetTableOID(ctx, tm.SourceSchema, tm.SourceTable)
 		if err != nil {
+			a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to get table OID", map[string]interface{}{
+				"error": err.Error(),
+				"table": tableName,
+			})
 			return nil, fmt.Errorf("failed to get OID for table %s: %w", tableName, err)
 		}
 		srcTableIDMapping[oid] = tableName
 	}
 
+	a.WriteLog(ctx, input.MirrorName, "INFO", "Creating publication", map[string]interface{}{
+		"tables": tables,
+	})
+
 	// Create publication
 	publicationName := fmt.Sprintf("bunny_pub_%s", input.MirrorName)
 	if err := srcConn.CreatePublication(ctx, publicationName, tables); err != nil {
+		a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to create publication", map[string]interface{}{
+			"error":       err.Error(),
+			"publication": publicationName,
+		})
 		return nil, fmt.Errorf("failed to create publication: %w", err)
 	}
+
+	a.WriteLog(ctx, input.MirrorName, "INFO", "Creating replication slot", nil)
 
 	// Create replication slot
 	slotName := fmt.Sprintf("bunny_slot_%s", input.MirrorName)
 	snapshotName, err := srcConn.CreateReplicationSlot(ctx, slotName)
 	if err != nil {
+		a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to create replication slot", map[string]interface{}{
+			"error": err.Error(),
+			"slot":  slotName,
+		})
 		return nil, fmt.Errorf("failed to create replication slot: %w", err)
 	}
 
@@ -135,6 +194,12 @@ func (a *Activities) SetupMirror(ctx context.Context, input *SetupInput) (*Setup
 	if err != nil {
 		return nil, fmt.Errorf("failed to store mirror state: %w", err)
 	}
+
+	a.WriteLog(ctx, input.MirrorName, "INFO", "Mirror setup complete", map[string]interface{}{
+		"slot":        slotName,
+		"publication": publicationName,
+		"snapshot":    snapshotName,
+	})
 
 	logger.Info("mirror setup complete",
 		slog.String("slot", slotName),
