@@ -250,31 +250,171 @@ type SyncOutput struct {
 // SyncFlow performs CDC synchronization
 func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutput, error) {
 	logger := slog.Default().With(slog.String("mirror", input.MirrorName))
-	logger.Info("starting sync flow", slog.Int64("lastLSN", input.LastLSN))
+	logger.Info("starting sync flow",
+		slog.Int64("lastLSN", input.LastLSN),
+		slog.String("slot", input.SlotName),
+		slog.String("publication", input.PublicationName))
 
-	// This is a placeholder for the actual CDC sync implementation
-	// In a real implementation, this would:
-	// 1. Connect to source replication stream
-	// 2. Read WAL changes
-	// 3. Transform and apply to destination
-	// 4. Update checkpoint
-
-	// Heartbeat to keep activity alive
-	heartbeat := func(msg string) {
-		activity.RecordHeartbeat(ctx, msg)
+	// Get peer configs
+	srcConfig, err := a.getPeerConfig(ctx, input.SourcePeer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get source peer config: %w", err)
 	}
 
-	// Simulate sync loop
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
+	dstConfig, err := a.getPeerConfig(ctx, input.DestinationPeer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	// Connect to source for replication
+	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to source: %w", err)
+	}
+	defer srcConn.Close()
+
+	// Setup replication connection
+	if err := srcConn.SetupReplConn(ctx); err != nil {
+		return nil, fmt.Errorf("failed to setup replication connection: %w", err)
+	}
+
+	// Get PG version for proper protocol handling
+	if _, err := srcConn.GetPGVersion(ctx); err != nil {
+		logger.Warn("failed to get PG version", slog.Any("error", err))
+	}
+
+	// Start replication
+	if err := srcConn.StartReplication(ctx, input.SlotName, input.PublicationName, input.LastLSN); err != nil {
+		return nil, fmt.Errorf("failed to start replication: %w", err)
+	}
+
+	// Connect to destination
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	// Build table to PK columns mapping
+	tablePKs := make(map[string][]string)
+	for _, tm := range input.TableMappings {
+		schema, err := srcConn.GetTableSchema(ctx, tm.SourceSchema, tm.SourceTable)
+		if err != nil {
+			logger.Warn("failed to get table schema",
+				slog.String("table", tm.FullSourceName()),
+				slog.Any("error", err))
+			continue
+		}
+		tablePKs[tm.FullSourceName()] = schema.PrimaryKeyColumns
+	}
+
+	// Create CDC reader
+	cdcReader := postgres.NewCDCReader(srcConn)
+
+	// Heartbeat and sync configuration
+	batchSize := 1000
+	if input.BatchSize > 0 {
+		batchSize = int(input.BatchSize)
+	}
+
+	idleTimeout := 60 * time.Second
+	if input.IdleTimeout > 0 {
+		idleTimeout = time.Duration(input.IdleTimeout) * time.Second
+	}
+
+	lastLSN := input.LastLSN
+	lastHeartbeat := time.Now()
+	recordsProcessed := int64(0)
+
+	logger.Info("CDC sync loop started",
+		slog.Int("batchSize", batchSize),
+		slog.Duration("idleTimeout", idleTimeout))
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			heartbeat("syncing...")
-			// In real implementation: pull records, sync, update LSN
+			logger.Info("sync flow stopped",
+				slog.Int64("lastLSN", lastLSN),
+				slog.Int64("recordsProcessed", recordsProcessed))
+			return &SyncOutput{LastLSN: lastLSN}, ctx.Err()
+		default:
+		}
+
+		// Send heartbeat every 30 seconds
+		if time.Since(lastHeartbeat) > 30*time.Second {
+			activity.RecordHeartbeat(ctx, fmt.Sprintf("syncing: LSN=%d, records=%d", lastLSN, recordsProcessed))
+			lastHeartbeat = time.Now()
+		}
+
+		// Pull records from replication stream
+		records, newLSN, err := cdcReader.PullRecords(ctx, batchSize, 5*time.Second)
+		if err != nil {
+			if ctx.Err() != nil {
+				return &SyncOutput{LastLSN: lastLSN}, ctx.Err()
+			}
+			logger.Error("failed to pull records", slog.Any("error", err))
+			// Sleep briefly before retrying
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		if len(records) == 0 {
+			// No records, continue polling
+			continue
+		}
+
+		// Apply records to destination
+		for _, rec := range records {
+			tableKey := fmt.Sprintf("%s.%s", rec.Schema, rec.Table)
+			pkCols := tablePKs[tableKey]
+
+			if err := postgres.ApplyRecord(ctx, dstConn, rec, pkCols); err != nil {
+				logger.Error("failed to apply record",
+					slog.String("operation", rec.Operation),
+					slog.String("table", tableKey),
+					slog.Any("error", err))
+				// Continue with next record - don't fail entire sync
+				continue
+			}
+
+			recordsProcessed++
+
+			if recordsProcessed%100 == 0 {
+				logger.Debug("CDC progress",
+					slog.Int64("records", recordsProcessed),
+					slog.Int64("lsn", rec.LSN))
+			}
+		}
+
+		// Update LSN
+		if newLSN > lastLSN {
+			lastLSN = newLSN
+			srcConn.UpdateLastOffset(lastLSN)
+
+			// Update checkpoint in catalog
+			_, err := a.CatalogPool.Exec(ctx, `
+				UPDATE bunny_internal.mirrors
+				SET updated_at = NOW()
+				WHERE name = $1
+			`, input.MirrorName)
+			if err != nil {
+				logger.Warn("failed to update mirror checkpoint", slog.Any("error", err))
+			}
+		}
+
+		// Log batch completion
+		if len(records) > 0 {
+			logger.Info("batch processed",
+				slog.Int("records", len(records)),
+				slog.Int64("lastLSN", lastLSN),
+				slog.Int64("totalProcessed", recordsProcessed))
+
+			// Write to mirror logs
+			a.WriteLog(ctx, input.MirrorName, "DEBUG", "CDC batch processed", map[string]interface{}{
+				"records":        len(records),
+				"lastLSN":        lastLSN,
+				"totalProcessed": recordsProcessed,
+			})
 		}
 	}
 }
