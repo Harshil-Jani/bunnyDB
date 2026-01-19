@@ -491,6 +491,86 @@ func (h *Handler) ListMirrors(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
+// Schema Discovery Handlers
+// ============================================================================
+
+// TableInfo represents a table in a database
+type TableInfo struct {
+	Schema    string `json:"schema"`
+	TableName string `json:"table_name"`
+	RowCount  int64  `json:"row_count,omitempty"`
+}
+
+// GetPeerTables returns all tables from a peer's database
+func (h *Handler) GetPeerTables(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	peerName := r.PathValue("name")
+
+	if peerName == "" {
+		writeError(w, http.StatusBadRequest, "peer name is required")
+		return
+	}
+
+	// Get peer connection info
+	var host, user, password, database, sslMode string
+	var port int
+	err := h.CatalogPool.QueryRow(ctx, `
+		SELECT host, port, username, password, database, ssl_mode
+		FROM bunny_internal.peers
+		WHERE name = $1
+	`, peerName).Scan(&host, &port, &user, &password, &database, &sslMode)
+
+	if err != nil {
+		writeError(w, http.StatusNotFound, "peer not found")
+		return
+	}
+
+	// Connect to the peer database
+	connStr := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		user, password, host, port, database, sslMode)
+
+	testCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(testCtx, connStr)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to connect: %s", err.Error()))
+		return
+	}
+	defer pool.Close()
+
+	// Query for tables
+	rows, err := pool.Query(testCtx, `
+		SELECT
+			schemaname as schema,
+			tablename as table_name
+		FROM pg_catalog.pg_tables
+		WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		ORDER BY schemaname, tablename
+	`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to query tables: %s", err.Error()))
+		return
+	}
+	defer rows.Close()
+
+	var tables []TableInfo
+	for rows.Next() {
+		var t TableInfo
+		if err := rows.Scan(&t.Schema, &t.TableName); err != nil {
+			continue
+		}
+		tables = append(tables, t)
+	}
+
+	if tables == nil {
+		tables = []TableInfo{}
+	}
+
+	writeJSON(w, http.StatusOK, tables)
+}
+
+// ============================================================================
 // Peer Handlers
 // ============================================================================
 
@@ -780,6 +860,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/peers/{name}", corsMiddleware(h.UpdatePeer))
 	mux.HandleFunc("DELETE /v1/peers/{name}", corsMiddleware(h.DeletePeer))
 	mux.HandleFunc("POST /v1/peers/{name}/test", corsMiddleware(h.TestPeer))
+	mux.HandleFunc("GET /v1/peers/{name}/tables", corsMiddleware(h.GetPeerTables))
 
 	// Mirror CRUD
 	mux.HandleFunc("POST /v1/mirrors", corsMiddleware(h.CreateMirror))

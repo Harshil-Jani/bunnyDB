@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Plus, Trash2, Loader2, Database, ArrowRight } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Loader2, Database, ArrowRight, Search, CheckSquare, Square, RefreshCw } from 'lucide-react';
 
 interface Peer {
   id: number;
@@ -11,6 +11,11 @@ interface Peer {
   port: number;
   user: string;
   database: string;
+}
+
+interface TableInfo {
+  schema: string;
+  table_name: string;
 }
 
 interface TableMapping {
@@ -29,6 +34,12 @@ export default function NewMirrorPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Source tables
+  const [sourceTables, setSourceTables] = useState<TableInfo[]>([]);
+  const [loadingTables, setLoadingTables] = useState(false);
+  const [tableSearch, setTableSearch] = useState('');
+  const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
+
   const [formData, setFormData] = useState({
     name: '',
     source_peer: '',
@@ -42,9 +53,7 @@ export default function NewMirrorPage() {
     snapshot_num_tables_in_parallel: 4,
   });
 
-  const [tableMappings, setTableMappings] = useState<TableMapping[]>([
-    { source_schema: 'public', source_table: '', destination_schema: 'public', destination_table: '' }
-  ]);
+  const [tableMappings, setTableMappings] = useState<TableMapping[]>([]);
 
   const fetchPeers = async () => {
     try {
@@ -59,39 +68,143 @@ export default function NewMirrorPage() {
     }
   };
 
+  const fetchSourceTables = async (peerName: string) => {
+    if (!peerName) {
+      setSourceTables([]);
+      return;
+    }
+
+    setLoadingTables(true);
+    try {
+      const res = await fetch(`${API_URL}/v1/peers/${peerName}/tables`);
+      if (!res.ok) throw new Error('Failed to fetch tables');
+      const data = await res.json();
+      setSourceTables(data || []);
+      setSelectedTables(new Set());
+      setTableMappings([]);
+    } catch (err) {
+      console.error('Failed to fetch tables:', err);
+      setSourceTables([]);
+    } finally {
+      setLoadingTables(false);
+    }
+  };
+
   useEffect(() => {
     fetchPeers();
   }, []);
 
-  const addTableMapping = () => {
-    setTableMappings([
-      ...tableMappings,
-      { source_schema: 'public', source_table: '', destination_schema: 'public', destination_table: '' }
-    ]);
+  useEffect(() => {
+    if (formData.source_peer) {
+      fetchSourceTables(formData.source_peer);
+    }
+  }, [formData.source_peer]);
+
+  // Filter tables based on search
+  const filteredTables = useMemo(() => {
+    if (!tableSearch) return sourceTables;
+    const search = tableSearch.toLowerCase();
+    return sourceTables.filter(t =>
+      t.table_name.toLowerCase().includes(search) ||
+      t.schema.toLowerCase().includes(search)
+    );
+  }, [sourceTables, tableSearch]);
+
+  // Group tables by schema
+  const tablesBySchema = useMemo(() => {
+    const grouped: Record<string, TableInfo[]> = {};
+    filteredTables.forEach(t => {
+      if (!grouped[t.schema]) grouped[t.schema] = [];
+      grouped[t.schema].push(t);
+    });
+    return grouped;
+  }, [filteredTables]);
+
+  const getTableKey = (t: TableInfo) => `${t.schema}.${t.table_name}`;
+
+  const toggleTable = (table: TableInfo) => {
+    const key = getTableKey(table);
+    const newSelected = new Set(selectedTables);
+    if (newSelected.has(key)) {
+      newSelected.delete(key);
+    } else {
+      newSelected.add(key);
+    }
+    setSelectedTables(newSelected);
+    updateMappingsFromSelection(newSelected);
   };
 
-  const removeTableMapping = (index: number) => {
-    setTableMappings(tableMappings.filter((_, i) => i !== index));
+  const toggleAllFiltered = () => {
+    const filteredKeys = new Set(filteredTables.map(getTableKey));
+    const allSelected = filteredTables.every(t => selectedTables.has(getTableKey(t)));
+
+    const newSelected = new Set(selectedTables);
+    if (allSelected) {
+      // Deselect all filtered
+      filteredKeys.forEach(k => newSelected.delete(k));
+    } else {
+      // Select all filtered
+      filteredKeys.forEach(k => newSelected.add(k));
+    }
+    setSelectedTables(newSelected);
+    updateMappingsFromSelection(newSelected);
   };
 
-  const updateTableMapping = (index: number, field: keyof TableMapping, value: string) => {
+  const toggleSchema = (schema: string) => {
+    const schemaTables = tablesBySchema[schema] || [];
+    const schemaKeys = schemaTables.map(getTableKey);
+    const allSelected = schemaKeys.every(k => selectedTables.has(k));
+
+    const newSelected = new Set(selectedTables);
+    if (allSelected) {
+      schemaKeys.forEach(k => newSelected.delete(k));
+    } else {
+      schemaKeys.forEach(k => newSelected.add(k));
+    }
+    setSelectedTables(newSelected);
+    updateMappingsFromSelection(newSelected);
+  };
+
+  const updateMappingsFromSelection = (selected: Set<string>) => {
+    const mappings: TableMapping[] = [];
+    selected.forEach(key => {
+      const [schema, table] = key.split('.');
+      mappings.push({
+        source_schema: schema,
+        source_table: table,
+        destination_schema: schema,
+        destination_table: table,
+      });
+    });
+    // Sort by schema then table name
+    mappings.sort((a, b) => {
+      if (a.source_schema !== b.source_schema) {
+        return a.source_schema.localeCompare(b.source_schema);
+      }
+      return a.source_table.localeCompare(b.source_table);
+    });
+    setTableMappings(mappings);
+  };
+
+  const updateMapping = (index: number, field: keyof TableMapping, value: string) => {
     const updated = [...tableMappings];
     updated[index][field] = value;
-    // Auto-fill destination if empty
-    if (field === 'source_table' && !updated[index].destination_table) {
-      updated[index].destination_table = value;
-    }
-    if (field === 'source_schema' && !updated[index].destination_schema) {
-      updated[index].destination_schema = value;
-    }
     setTableMappings(updated);
+  };
+
+  const removeMapping = (index: number) => {
+    const mapping = tableMappings[index];
+    const key = `${mapping.source_schema}.${mapping.source_table}`;
+    const newSelected = new Set(selectedTables);
+    newSelected.delete(key);
+    setSelectedTables(newSelected);
+    setTableMappings(tableMappings.filter((_, i) => i !== index));
   };
 
   const createMirror = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    // Validate
     if (!formData.name) {
       setError('Mirror name is required');
       return;
@@ -104,9 +217,8 @@ export default function NewMirrorPage() {
       setError('Source and destination peers must be different');
       return;
     }
-    const validMappings = tableMappings.filter(m => m.source_table && m.destination_table);
-    if (validMappings.length === 0) {
-      setError('At least one table mapping is required');
+    if (tableMappings.length === 0) {
+      setError('At least one table must be selected');
       return;
     }
 
@@ -117,7 +229,7 @@ export default function NewMirrorPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
-          table_mappings: validMappings,
+          table_mappings: tableMappings,
         }),
       });
 
@@ -144,6 +256,7 @@ export default function NewMirrorPage() {
 
   const sourcePeer = peers.find(p => p.name === formData.source_peer);
   const destPeer = peers.find(p => p.name === formData.destination_peer);
+  const allFilteredSelected = filteredTables.length > 0 && filteredTables.every(t => selectedTables.has(getTableKey(t)));
 
   return (
     <div className="space-y-6">
@@ -259,81 +372,178 @@ export default function NewMirrorPage() {
             </div>
           </div>
 
-          {/* Table Mappings */}
+          {/* Table Selection */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold">Table Mappings</h2>
-              <button
-                type="button"
-                onClick={addTableMapping}
-                className="flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-              >
-                <Plus className="w-4 h-4" />
-                Add Table
-              </button>
+              <h2 className="text-lg font-semibold">Select Tables</h2>
+              {formData.source_peer && (
+                <button
+                  type="button"
+                  onClick={() => fetchSourceTables(formData.source_peer)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-gray-600 hover:bg-gray-100 rounded"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingTables ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              )}
             </div>
 
-            <div className="space-y-4">
-              {tableMappings.map((mapping, index) => (
-                <div key={index} className="grid grid-cols-1 md:grid-cols-9 gap-2 items-end p-4 bg-gray-50 rounded-lg">
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-medium text-gray-500">Source Schema</label>
+            {!formData.source_peer ? (
+              <div className="text-center py-8 text-gray-500">
+                Select a source peer to load available tables
+              </div>
+            ) : loadingTables ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+                <span className="ml-2 text-gray-500">Loading tables...</span>
+              </div>
+            ) : sourceTables.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                No tables found in the source database
+              </div>
+            ) : (
+              <>
+                {/* Search and Select All */}
+                <div className="flex gap-4 mb-4">
+                  <div className="flex-1 relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <input
                       type="text"
-                      value={mapping.source_schema}
-                      onChange={(e) => updateTableMapping(index, 'source_schema', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 text-sm"
-                      placeholder="public"
+                      value={tableSearch}
+                      onChange={(e) => setTableSearch(e.target.value)}
+                      placeholder="Search tables..."
+                      className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-medium text-gray-500">Source Table</label>
-                    <input
-                      type="text"
-                      value={mapping.source_table}
-                      onChange={(e) => updateTableMapping(index, 'source_table', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 text-sm"
-                      placeholder="users"
-                      required
-                    />
-                  </div>
-                  <div className="flex justify-center items-center">
-                    <ArrowRight className="w-5 h-5 text-gray-400" />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-medium text-gray-500">Dest Schema</label>
-                    <input
-                      type="text"
-                      value={mapping.destination_schema}
-                      onChange={(e) => updateTableMapping(index, 'destination_schema', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 text-sm"
-                      placeholder="public"
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-medium text-gray-500">Dest Table</label>
-                    <input
-                      type="text"
-                      value={mapping.destination_table}
-                      onChange={(e) => updateTableMapping(index, 'destination_table', e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 text-sm"
-                      placeholder="users"
-                      required
-                    />
-                  </div>
-                  {tableMappings.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeTableMapping(index)}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={toggleAllFiltered}
+                    className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                  >
+                    {allFilteredSelected ? (
+                      <CheckSquare className="w-4 h-4" />
+                    ) : (
+                      <Square className="w-4 h-4" />
+                    )}
+                    {allFilteredSelected ? 'Deselect All' : 'Select All'}
+                  </button>
                 </div>
-              ))}
-            </div>
+
+                {/* Selected count */}
+                <div className="mb-4 text-sm text-gray-600">
+                  {selectedTables.size} of {sourceTables.length} tables selected
+                </div>
+
+                {/* Tables grouped by schema */}
+                <div className="max-h-64 overflow-y-auto border rounded-lg">
+                  {Object.entries(tablesBySchema).map(([schema, tables]) => {
+                    const schemaKeys = tables.map(getTableKey);
+                    const allSchemaSelected = schemaKeys.every(k => selectedTables.has(k));
+                    const someSchemaSelected = schemaKeys.some(k => selectedTables.has(k));
+
+                    return (
+                      <div key={schema} className="border-b last:border-b-0">
+                        {/* Schema header */}
+                        <div
+                          className="flex items-center gap-2 px-4 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100"
+                          onClick={() => toggleSchema(schema)}
+                        >
+                          {allSchemaSelected ? (
+                            <CheckSquare className="w-4 h-4 text-blue-500" />
+                          ) : someSchemaSelected ? (
+                            <div className="w-4 h-4 border-2 border-blue-500 bg-blue-100 rounded" />
+                          ) : (
+                            <Square className="w-4 h-4 text-gray-400" />
+                          )}
+                          <span className="font-medium text-gray-700">{schema}</span>
+                          <span className="text-xs text-gray-500">({tables.length} tables)</span>
+                        </div>
+                        {/* Tables */}
+                        <div className="divide-y">
+                          {tables.map(table => {
+                            const isSelected = selectedTables.has(getTableKey(table));
+                            return (
+                              <div
+                                key={getTableKey(table)}
+                                className={`flex items-center gap-2 px-4 py-2 pl-8 cursor-pointer hover:bg-gray-50 ${
+                                  isSelected ? 'bg-blue-50' : ''
+                                }`}
+                                onClick={() => toggleTable(table)}
+                              >
+                                {isSelected ? (
+                                  <CheckSquare className="w-4 h-4 text-blue-500" />
+                                ) : (
+                                  <Square className="w-4 h-4 text-gray-400" />
+                                )}
+                                <span className={isSelected ? 'text-blue-700' : 'text-gray-700'}>
+                                  {table.table_name}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
+
+          {/* Selected Table Mappings */}
+          {tableMappings.length > 0 && (
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-lg font-semibold mb-4">
+                Table Mappings ({tableMappings.length})
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Customize destination schema/table names if needed
+              </p>
+
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {tableMappings.map((mapping, index) => (
+                  <div key={index} className="grid grid-cols-12 gap-2 items-center p-3 bg-gray-50 rounded-lg">
+                    <div className="col-span-5 flex items-center gap-2">
+                      <span className="text-xs text-gray-500 w-16">Source:</span>
+                      <span className="font-mono text-sm">
+                        {mapping.source_schema}.{mapping.source_table}
+                      </span>
+                    </div>
+                    <div className="col-span-1 flex justify-center">
+                      <ArrowRight className="w-4 h-4 text-gray-400" />
+                    </div>
+                    <div className="col-span-2">
+                      <input
+                        type="text"
+                        value={mapping.destination_schema}
+                        onChange={(e) => updateMapping(index, 'destination_schema', e.target.value)}
+                        className="w-full text-sm rounded border-gray-300 border p-1"
+                        placeholder="schema"
+                      />
+                    </div>
+                    <div className="col-span-3">
+                      <input
+                        type="text"
+                        value={mapping.destination_table}
+                        onChange={(e) => updateMapping(index, 'destination_table', e.target.value)}
+                        className="w-full text-sm rounded border-gray-300 border p-1"
+                        placeholder="table"
+                      />
+                    </div>
+                    <div className="col-span-1 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => removeMapping(index)}
+                        className="p-1 text-red-500 hover:bg-red-50 rounded"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Options */}
           <div className="bg-white rounded-lg shadow p-6">
@@ -430,7 +640,7 @@ export default function NewMirrorPage() {
             </button>
             <button
               type="submit"
-              disabled={creating}
+              disabled={creating || tableMappings.length === 0}
               className="flex items-center gap-2 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
             >
               {creating ? (
