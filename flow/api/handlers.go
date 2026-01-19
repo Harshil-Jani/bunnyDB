@@ -783,6 +783,7 @@ func (h *Handler) ListMirrors(w http.ResponseWriter, r *http.Request) {
 			COALESCE(slot_name, ''),
 			COALESCE(publication_name, ''),
 			COALESCE(last_lsn, 0),
+			COALESCE(last_sync_batch_id, 0),
 			error_message,
 			COALESCE(error_count, 0)
 		FROM bunny_internal.mirror_state
@@ -799,7 +800,7 @@ func (h *Handler) ListMirrors(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m MirrorStatusResponse
 		var errMsg *string
-		err := rows.Scan(&m.Name, &m.Status, &m.SlotName, &m.PublicationName, &m.LastLSN, &errMsg, &m.ErrorCount)
+		err := rows.Scan(&m.Name, &m.Status, &m.SlotName, &m.PublicationName, &m.LastLSN, &m.LastSyncBatchID, &errMsg, &m.ErrorCount)
 		if err != nil {
 			slog.Error("failed to scan mirror row", slog.Any("error", err))
 			continue
@@ -808,6 +809,25 @@ func (h *Handler) ListMirrors(w http.ResponseWriter, r *http.Request) {
 			m.ErrorMessage = *errMsg
 		}
 		mirrors = append(mirrors, m)
+	}
+
+	// Query Temporal to get live status for each mirror
+	for i := range mirrors {
+		workflowID := fmt.Sprintf("cdc-%s", mirrors[i].Name)
+		resp, err := h.TemporalClient.QueryWorkflow(ctx, workflowID, "", workflows.QueryFlowState)
+		if err == nil {
+			var state model.CDCFlowState
+			if err := resp.Get(&state); err == nil {
+				// Update with live workflow state
+				mirrors[i].Status = string(state.Status)
+				mirrors[i].SlotName = state.SlotName
+				mirrors[i].PublicationName = state.PublicationName
+				mirrors[i].LastLSN = state.LastLSN
+				mirrors[i].LastSyncBatchID = state.LastSyncBatchID
+				mirrors[i].ErrorMessage = state.ErrorMessage
+				mirrors[i].ErrorCount = state.ErrorCount
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, mirrors)
