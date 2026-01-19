@@ -56,6 +56,7 @@ func SnapshotFlowWorkflow(ctx workflow.Context, input *SnapshotFlowInput) error 
 	}
 
 	// Step 1: Drop foreign keys on destination (deferred FK strategy)
+	// This MUST happen BEFORE snapshot export to avoid FK constraint issues during copy
 	if input.ReplicateForeignKeys {
 		logger.Info("dropping foreign keys on destination for initial sync")
 
@@ -71,9 +72,64 @@ func SnapshotFlowWorkflow(ctx workflow.Context, input *SnapshotFlowInput) error 
 		}
 	}
 
-	// Step 2: Clone tables in parallel using Temporal's workflow primitives
+	// Step 2: Start snapshot session - this creates a LONG-LIVED connection
+	// that holds the exported snapshot valid for all table copies
+	logger.Info("starting snapshot session")
+
+	snapshotSessionOpts := workflow.ActivityOptions{
+		StartToCloseTimeout: 1 * time.Hour,
+		HeartbeatTimeout:    2 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 3,
+		},
+	}
+	snapshotCtx := workflow.WithActivityOptions(ctx, snapshotSessionOpts)
+
+	var snapshotOutput activities.StartSnapshotSessionOutput
+	err := workflow.ExecuteActivity(snapshotCtx, "StartSnapshotSession", &activities.StartSnapshotSessionInput{
+		MirrorName: input.MirrorName,
+		SourcePeer: input.SourcePeer,
+	}).Get(snapshotCtx, &snapshotOutput)
+
+	if err != nil {
+		return fmt.Errorf("failed to start snapshot session: %w", err)
+	}
+
+	snapshotName := snapshotOutput.SnapshotName
+	logger.Info("snapshot session started", slog.String("snapshot", snapshotName))
+
+	// Start a background activity to hold the snapshot session open
+	// This activity will run until cancelled
+	holdSessionOpts := workflow.ActivityOptions{
+		StartToCloseTimeout: 48 * time.Hour, // Long timeout for large copies
+		HeartbeatTimeout:    1 * time.Minute,
+	}
+	holdCtx, cancelHoldSession := workflow.WithCancel(ctx)
+	holdCtx = workflow.WithActivityOptions(holdCtx, holdSessionOpts)
+
+	holdFuture := workflow.ExecuteActivity(holdCtx, "HoldSnapshotSession", &activities.HoldSnapshotSessionInput{
+		MirrorName: input.MirrorName,
+	})
+
+	// Ensure we always clean up the snapshot session
+	defer func() {
+		// Cancel the hold activity
+		cancelHoldSession()
+
+		// End the snapshot session
+		endCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: 5 * time.Minute,
+		})
+		_ = workflow.ExecuteActivity(endCtx, "EndSnapshotSession", &activities.EndSnapshotSessionInput{
+			MirrorName: input.MirrorName,
+		}).Get(endCtx, nil)
+	}()
+
+	// Step 3: Clone tables in parallel using Temporal's workflow primitives
+	// All table copies use the same snapshot for consistency
 	logger.Info("starting parallel table cloning",
-		slog.Int("parallelism", int(input.NumTablesInParallel)))
+		slog.Int("parallelism", int(input.NumTablesInParallel)),
+		slog.String("snapshot", snapshotName))
 
 	// Execute child workflows for all tables and collect futures
 	var childFutures []workflow.ChildWorkflowFuture
@@ -95,7 +151,7 @@ func SnapshotFlowWorkflow(ctx workflow.Context, input *SnapshotFlowInput) error 
 			SourcePeer:          input.SourcePeer,
 			DestinationPeer:     input.DestinationPeer,
 			TableMapping:        mapping,
-			SnapshotName:        input.SnapshotName,
+			SnapshotName:        snapshotName, // Use the snapshot from our long-lived session
 			NumRowsPerPartition: input.NumRowsPerPartition,
 			MaxParallelWorkers:  input.MaxParallelWorkers,
 		})
@@ -117,11 +173,25 @@ func SnapshotFlowWorkflow(ctx workflow.Context, input *SnapshotFlowInput) error 
 		}
 	}
 
+	// Cancel the hold session activity now that all copies are done
+	cancelHoldSession()
+	// Wait for it to finish (ignore cancellation error)
+	_ = holdFuture.Get(ctx, nil)
+
+	// End the snapshot session explicitly
+	endCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+	})
+	_ = workflow.ExecuteActivity(endCtx, "EndSnapshotSession", &activities.EndSnapshotSessionInput{
+		MirrorName: input.MirrorName,
+	}).Get(endCtx, nil)
+
 	if firstErr != nil {
 		return firstErr
 	}
 
-	// Step 3: Create indexes on destination
+	// Step 4: Create indexes on destination
+	// This happens AFTER all data is copied, using SEPARATE connections
 	if input.ReplicateIndexes {
 		logger.Info("creating indexes on destination")
 
@@ -139,7 +209,8 @@ func SnapshotFlowWorkflow(ctx workflow.Context, input *SnapshotFlowInput) error 
 		}
 	}
 
-	// Step 4: Recreate foreign keys on destination (with validation)
+	// Step 5: Recreate foreign keys on destination (with validation)
+	// This happens AFTER indexes are created, using SEPARATE connections
 	if input.ReplicateForeignKeys {
 		logger.Info("recreating foreign keys on destination")
 

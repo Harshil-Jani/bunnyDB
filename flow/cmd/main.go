@@ -135,6 +135,9 @@ func runWorker(config *shared.Config, catalogPool *pgxpool.Pool, temporalClient 
 	w.RegisterActivity(acts.DropDestinationTables)
 	w.RegisterActivity(acts.GetPartitionInfo)
 	w.RegisterActivity(acts.CopyPartition)
+	w.RegisterActivity(acts.StartSnapshotSession)
+	w.RegisterActivity(acts.HoldSnapshotSession)
+	w.RegisterActivity(acts.EndSnapshotSession)
 
 	// Graceful shutdown
 	go func() {
