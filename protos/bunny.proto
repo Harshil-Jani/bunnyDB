@@ -1,0 +1,402 @@
+syntax = "proto3";
+
+package bunny;
+
+option go_package = "github.com/bunnydb/bunnydb/flow/generated/protos";
+
+import "google/protobuf/timestamp.proto";
+
+// ============================================================================
+// Peer Configuration
+// ============================================================================
+
+message PostgresConfig {
+  string host = 1;
+  uint32 port = 2;
+  string user = 3;
+  string password = 4;
+  string database = 5;
+
+  // Optional settings
+  optional string metadata_schema = 6;
+  optional SSHConfig ssh_config = 7;
+  bool require_tls = 8;
+  optional bytes root_ca = 9;
+  optional string tls_host = 10;
+}
+
+message SSHConfig {
+  string host = 1;
+  uint32 port = 2;
+  string user = 3;
+  string private_key = 4;
+  optional string password = 5;
+  optional string host_key = 6;
+}
+
+message Peer {
+  string name = 1;
+  PeerType type = 2;
+  PostgresConfig postgres_config = 3;
+}
+
+enum PeerType {
+  PEER_TYPE_UNKNOWN = 0;
+  PEER_TYPE_POSTGRES = 1;
+}
+
+// ============================================================================
+// Mirror Configuration
+// ============================================================================
+
+message MirrorConfig {
+  string name = 1;
+  string source_peer = 2;
+  string destination_peer = 3;
+
+  repeated TableMapping table_mappings = 4;
+
+  // Snapshot settings
+  bool do_initial_snapshot = 5;
+  uint32 snapshot_num_rows_per_partition = 6;
+  uint32 snapshot_max_parallel_workers = 7;
+  uint32 snapshot_num_tables_in_parallel = 8;
+
+  // CDC settings
+  uint32 max_batch_size = 9;
+  uint32 idle_timeout_seconds = 10;
+
+  // Publication/slot settings (optional - auto-generated if not provided)
+  optional string publication_name = 11;
+  optional string replication_slot_name = 12;
+
+  // Schema replication settings
+  SchemaReplicationConfig schema_config = 13;
+
+  // Soft delete settings
+  optional string soft_delete_col_name = 14;
+  optional string synced_at_col_name = 15;
+
+  // Environment variables for runtime config
+  map<string, string> env = 16;
+}
+
+message TableMapping {
+  string source_schema = 1;
+  string source_table = 2;
+  string destination_schema = 3;
+  string destination_table = 4;
+
+  // Partition key for parallel snapshot
+  optional string partition_key = 5;
+
+  // Columns to exclude from replication
+  repeated string exclude_columns = 6;
+}
+
+message SchemaReplicationConfig {
+  // What to replicate
+  bool replicate_columns = 1;      // Column additions
+  bool replicate_indexes = 2;      // Index definitions
+  bool replicate_foreign_keys = 3; // FK constraints (deferred)
+  bool replicate_defaults = 4;     // Default values
+  bool replicate_not_null = 5;     // NOT NULL constraints
+
+  // FK handling strategy
+  FKHandlingStrategy fk_strategy = 6;
+
+  // Index types to replicate (empty = all)
+  repeated string index_types = 7;  // btree, hash, gin, gist, etc.
+}
+
+enum FKHandlingStrategy {
+  FK_STRATEGY_DEFER = 0;     // Drop before sync, recreate after (default)
+  FK_STRATEGY_DISABLE = 1;   // Use session_replication_role=replica
+  FK_STRATEGY_NONE = 2;      // No special handling
+}
+
+// ============================================================================
+// Mirror Status & State
+// ============================================================================
+
+enum MirrorStatus {
+  MIRROR_STATUS_UNKNOWN = 0;
+  MIRROR_STATUS_CREATED = 1;
+  MIRROR_STATUS_SETTING_UP = 2;
+  MIRROR_STATUS_SNAPSHOT = 3;
+  MIRROR_STATUS_RUNNING = 4;
+  MIRROR_STATUS_PAUSED = 5;
+  MIRROR_STATUS_PAUSING = 6;
+  MIRROR_STATUS_FAILED = 7;
+  MIRROR_STATUS_TERMINATING = 8;
+  MIRROR_STATUS_TERMINATED = 9;
+  MIRROR_STATUS_RESYNCING = 10;
+}
+
+message MirrorState {
+  string mirror_name = 1;
+  MirrorStatus status = 2;
+
+  string slot_name = 3;
+  string publication_name = 4;
+
+  int64 last_lsn = 5;
+  int64 last_sync_batch_id = 6;
+  int64 last_normalize_batch_id = 7;
+
+  optional string error_message = 8;
+  int32 error_count = 9;
+  optional google.protobuf.Timestamp last_error_at = 10;
+
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+}
+
+// ============================================================================
+// Table Schema
+// ============================================================================
+
+message TableSchema {
+  string table_name = 1;
+  repeated ColumnDefinition columns = 2;
+  repeated string primary_key_columns = 3;
+  bool is_replica_identity_full = 4;
+}
+
+message ColumnDefinition {
+  string name = 1;
+  string type = 2;
+  int32 type_modifier = 3;
+  bool nullable = 4;
+  optional string default_value = 5;
+}
+
+message IndexDefinition {
+  string name = 1;
+  string table_name = 2;
+  string definition = 3;  // Full CREATE INDEX statement
+  bool is_unique = 4;
+  bool is_primary = 5;
+  string index_type = 6;  // btree, hash, gin, etc.
+  repeated string columns = 7;
+  optional string where_clause = 8;  // For partial indexes
+}
+
+message ForeignKeyDefinition {
+  string name = 1;
+  string source_table = 2;
+  repeated string source_columns = 3;
+  string target_table = 4;
+  repeated string target_columns = 5;
+  string on_delete = 6;
+  string on_update = 7;
+  bool is_deferrable = 8;
+  bool initially_deferred = 9;
+  string definition = 10;  // Full constraint definition
+}
+
+// ============================================================================
+// Schema Delta
+// ============================================================================
+
+message SchemaDelta {
+  string source_table = 1;
+  string destination_table = 2;
+
+  repeated ColumnDefinition added_columns = 3;
+  repeated string dropped_columns = 4;
+  repeated ColumnTypeChange type_changes = 5;
+
+  repeated IndexDefinition added_indexes = 6;
+  repeated string dropped_indexes = 7;
+
+  repeated ForeignKeyDefinition added_fks = 8;
+  repeated string dropped_fks = 9;
+}
+
+message ColumnTypeChange {
+  string column_name = 1;
+  string old_type = 2;
+  string new_type = 3;
+}
+
+// ============================================================================
+// CDC Records
+// ============================================================================
+
+enum RecordType {
+  RECORD_TYPE_UNKNOWN = 0;
+  RECORD_TYPE_INSERT = 1;
+  RECORD_TYPE_UPDATE = 2;
+  RECORD_TYPE_DELETE = 3;
+}
+
+message CDCRecord {
+  RecordType type = 1;
+  string table_name = 2;
+  int64 lsn = 3;
+  int64 commit_time_nano = 4;
+
+  // For INSERT and UPDATE: new row data
+  map<string, bytes> new_data = 5;
+
+  // For UPDATE and DELETE: old row data (based on replica identity)
+  map<string, bytes> old_data = 6;
+
+  // Unchanged TOAST columns
+  repeated string unchanged_toast_columns = 7;
+}
+
+// ============================================================================
+// API Request/Response Messages
+// ============================================================================
+
+// Create Mirror
+message CreateMirrorRequest {
+  MirrorConfig config = 1;
+}
+
+message CreateMirrorResponse {
+  string mirror_name = 1;
+  string workflow_id = 2;
+  MirrorStatus status = 3;
+}
+
+// Get Mirror Status
+message GetMirrorStatusRequest {
+  string mirror_name = 1;
+}
+
+message GetMirrorStatusResponse {
+  MirrorState state = 1;
+  repeated TableSyncStatus table_statuses = 2;
+}
+
+message TableSyncStatus {
+  string table_name = 1;
+  string status = 2;
+  int64 rows_synced = 3;
+  optional google.protobuf.Timestamp last_synced_at = 4;
+}
+
+// Pause/Resume
+message PauseMirrorRequest {
+  string mirror_name = 1;
+}
+
+message ResumeMirrorRequest {
+  string mirror_name = 1;
+}
+
+// Drop Mirror
+message DropMirrorRequest {
+  string mirror_name = 1;
+  bool drop_destination_tables = 2;
+  bool drop_stats = 3;
+}
+
+// Resync
+message ResyncMirrorRequest {
+  string mirror_name = 1;
+  optional string table_name = 2;  // If provided, only resync this table
+}
+
+message ResyncMirrorResponse {
+  string mirror_name = 1;
+  string workflow_id = 2;
+  repeated string tables_to_resync = 3;
+}
+
+// Retry
+message RetryMirrorRequest {
+  string mirror_name = 1;
+  optional string table_name = 2;  // If provided, only retry this table
+  bool skip_backoff = 3;           // Skip Temporal's exponential backoff
+}
+
+// Schema Diff
+message GetSchemaDiffRequest {
+  string mirror_name = 1;
+}
+
+message GetSchemaDiffResponse {
+  repeated SchemaDelta deltas = 1;
+}
+
+// Sync Schema
+message SyncSchemaRequest {
+  string mirror_name = 1;
+  bool sync_columns = 2;
+  bool sync_indexes = 3;
+  bool sync_fks = 4;
+}
+
+// List Mirrors
+message ListMirrorsRequest {
+  optional string status_filter = 1;
+}
+
+message ListMirrorsResponse {
+  repeated MirrorState mirrors = 1;
+}
+
+// ============================================================================
+// Workflow Signals
+// ============================================================================
+
+enum MirrorSignal {
+  SIGNAL_UNKNOWN = 0;
+  SIGNAL_PAUSE = 1;
+  SIGNAL_RESUME = 2;
+  SIGNAL_TERMINATE = 3;
+  SIGNAL_RESYNC = 4;
+  SIGNAL_RESYNC_TABLE = 5;
+  SIGNAL_RETRY_NOW = 6;
+  SIGNAL_SYNC_SCHEMA = 7;
+}
+
+message MirrorSignalPayload {
+  MirrorSignal signal = 1;
+  optional string table_name = 2;
+  map<string, string> options = 3;
+}
+
+// ============================================================================
+// Internal Workflow Messages
+// ============================================================================
+
+message SetupFlowInput {
+  MirrorConfig config = 1;
+}
+
+message SetupFlowOutput {
+  map<uint32, string> src_table_id_name_mapping = 1;
+  repeated TableSchema table_schemas = 2;
+  repeated IndexDefinition indexes = 3;
+  repeated ForeignKeyDefinition foreign_keys = 4;
+}
+
+message SnapshotFlowInput {
+  MirrorConfig config = 1;
+  string slot_name = 2;
+  string snapshot_name = 3;
+}
+
+message CDCFlowInput {
+  MirrorConfig config = 1;
+  MirrorState state = 2;
+}
+
+message ResyncTableInput {
+  string mirror_name = 1;
+  string table_name = 2;
+  MirrorConfig config = 3;
+  string snapshot_name = 4;
+}
+
+message DropFlowInput {
+  string mirror_name = 1;
+  MirrorConfig config = 2;
+  bool drop_destination_tables = 3;
+  bool is_resync = 4;
+}
