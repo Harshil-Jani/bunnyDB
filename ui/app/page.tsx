@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Play, Pause, RefreshCw, Trash2, RotateCcw, Database, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Play, Pause, RefreshCw, Trash2, RotateCcw, Database, AlertCircle, CheckCircle, Clock, Plus } from 'lucide-react';
 
 interface Mirror {
   name: string;
@@ -25,6 +26,7 @@ interface TableStatus {
 const API_URL = process.env.BUNNY_API_URL || 'http://localhost:8112';
 
 export default function Home() {
+  const router = useRouter();
   const [mirrors, setMirrors] = useState<Mirror[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -122,13 +124,22 @@ export default function Home() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Mirrors</h1>
-        <button
-          onClick={fetchMirrors}
-          className="flex items-center gap-2 px-4 py-2 bg-bunny-500 text-white rounded-lg hover:bg-bunny-600"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchMirrors}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+          <button
+            onClick={() => router.push('/mirrors/new')}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+          >
+            <Plus className="w-4 h-4" />
+            Create Mirror
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -142,7 +153,14 @@ export default function Home() {
         <div className="bg-white rounded-lg shadow p-8 text-center">
           <Database className="w-12 h-12 mx-auto text-gray-400 mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No mirrors yet</h3>
-          <p className="text-gray-500">Create your first mirror to start replicating data.</p>
+          <p className="text-gray-500 mb-4">Create your first mirror to start replicating data.</p>
+          <button
+            onClick={() => router.push('/mirrors/new')}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+          >
+            <Plus className="w-4 h-4" />
+            Create Mirror
+          </button>
         </div>
       ) : (
         <div className="grid gap-4">
