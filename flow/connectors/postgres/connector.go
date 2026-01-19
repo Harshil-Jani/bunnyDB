@@ -56,6 +56,14 @@ type ReplState struct {
 func NewPostgresConnector(ctx context.Context, config *PostgresConfig) (*PostgresConnector, error) {
 	logger := slog.Default().With(slog.String("component", "postgres-connector"))
 
+	// Debug log the incoming config
+	logger.Info("NewPostgresConnector called",
+		slog.String("host", config.Host),
+		slog.Int("port", config.Port),
+		slog.String("user", config.User),
+		slog.String("database", config.Database),
+		slog.String("sslMode", config.SSLMode))
+
 	// Determine SSL mode
 	sslMode := config.SSLMode
 	if sslMode == "" {
@@ -66,10 +74,20 @@ func NewPostgresConnector(ctx context.Context, config *PostgresConfig) (*Postgre
 		}
 	}
 
-	connString := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		config.Host, config.Port, config.User, config.Password, config.Database, sslMode,
-	)
+	// Build connection string - only include password if it's set
+	var connString string
+	if config.Password != "" {
+		connString = fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			config.Host, config.Port, config.User, config.Password, config.Database, sslMode,
+		)
+	} else {
+		connString = fmt.Sprintf(
+			"host=%s port=%d user=%s dbname=%s sslmode=%s",
+			config.Host, config.Port, config.User, config.Database, sslMode,
+		)
+	}
+	logger.Info("connection string built", slog.String("dbname", config.Database), slog.String("connString", connString))
 
 	connConfig, err := pgx.ParseConfig(connString)
 	if err != nil {
@@ -146,10 +164,19 @@ func (c *PostgresConnector) SetupReplConn(ctx context.Context) error {
 		}
 	}
 
-	connString := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s replication=database sslmode=%s",
-		c.config.Host, c.config.Port, c.config.User, c.config.Password, c.config.Database, sslMode,
-	)
+	// Build connection string - only include password if it's set
+	var connString string
+	if c.config.Password != "" {
+		connString = fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s replication=database sslmode=%s",
+			c.config.Host, c.config.Port, c.config.User, c.config.Password, c.config.Database, sslMode,
+		)
+	} else {
+		connString = fmt.Sprintf(
+			"host=%s port=%d user=%s dbname=%s replication=database sslmode=%s",
+			c.config.Host, c.config.Port, c.config.User, c.config.Database, sslMode,
+		)
+	}
 
 	connConfig, err := pgx.ParseConfig(connString)
 	if err != nil {
@@ -269,7 +296,7 @@ func (c *PostgresConnector) CreatePublication(
 		tableList += t
 	}
 
-	query := fmt.Sprintf("CREATE PUBLICATION %s FOR TABLE %s", publicationName, tableList)
+	query := fmt.Sprintf("CREATE PUBLICATION \"%s\" FOR TABLE %s", publicationName, tableList)
 	_, err = c.conn.Exec(ctx, query)
 	if err != nil {
 		return fmt.Errorf("failed to create publication: %w", err)
@@ -343,7 +370,7 @@ func (c *PostgresConnector) DropReplicationSlot(ctx context.Context, slotName st
 // DropPublication drops a publication
 func (c *PostgresConnector) DropPublication(ctx context.Context, publicationName string) error {
 	_, err := c.conn.Exec(ctx,
-		fmt.Sprintf("DROP PUBLICATION IF EXISTS %s", publicationName),
+		fmt.Sprintf("DROP PUBLICATION IF EXISTS \"%s\"", publicationName),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to drop publication: %w", err)
