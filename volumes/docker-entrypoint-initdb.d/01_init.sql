@@ -9,7 +9,13 @@ CREATE TABLE IF NOT EXISTS bunny_internal.peers (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) UNIQUE NOT NULL,
     peer_type VARCHAR(50) NOT NULL DEFAULT 'POSTGRES',
-    config JSONB NOT NULL,
+    host VARCHAR(255) NOT NULL,
+    port INT NOT NULL DEFAULT 5432,
+    username VARCHAR(255) NOT NULL,
+    password VARCHAR(255),
+    database VARCHAR(255) NOT NULL,
+    ssl_mode VARCHAR(50) DEFAULT 'prefer',
+    config JSONB,  -- For additional config options
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -95,6 +96,28 @@ type TableStatusResponse struct {
 // ResyncRequest is the request to resync
 type ResyncRequest struct {
 	TableName string `json:"table_name,omitempty"` // Optional for table-level resync
+}
+
+// CreatePeerRequest is the request to create a peer
+type CreatePeerRequest struct {
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	User     string `json:"user"`
+	Password string `json:"password"`
+	Database string `json:"database"`
+	SSLMode  string `json:"ssl_mode,omitempty"`
+}
+
+// PeerResponse is the response for peer operations
+type PeerResponse struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	User     string `json:"user"`
+	Database string `json:"database"`
+	SSLMode  string `json:"ssl_mode"`
 }
 
 // RetryRequest is the request to retry
@@ -468,6 +491,192 @@ func (h *Handler) ListMirrors(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================================
+// Peer Handlers
+// ============================================================================
+
+// CreatePeer creates a new peer connection
+func (h *Handler) CreatePeer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req CreatePeerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Name == "" || req.Host == "" || req.Database == "" {
+		writeError(w, http.StatusBadRequest, "name, host, and database are required")
+		return
+	}
+
+	if req.Port == 0 {
+		req.Port = 5432
+	}
+	if req.SSLMode == "" {
+		req.SSLMode = "prefer"
+	}
+
+	var peerID int64
+	err := h.CatalogPool.QueryRow(ctx, `
+		INSERT INTO bunny_internal.peers (name, host, port, username, password, database, ssl_mode)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id
+	`, req.Name, req.Host, req.Port, req.User, req.Password, req.Database, req.SSLMode).Scan(&peerID)
+
+	if err != nil {
+		slog.Error("failed to create peer", slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, "failed to create peer")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, PeerResponse{
+		ID:       peerID,
+		Name:     req.Name,
+		Host:     req.Host,
+		Port:     req.Port,
+		User:     req.User,
+		Database: req.Database,
+		SSLMode:  req.SSLMode,
+	})
+}
+
+// ListPeers lists all peer connections
+func (h *Handler) ListPeers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	rows, err := h.CatalogPool.Query(ctx, `
+		SELECT id, name, host, port, username, database, ssl_mode
+		FROM bunny_internal.peers
+		ORDER BY name
+	`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list peers")
+		return
+	}
+	defer rows.Close()
+
+	var peers []PeerResponse
+	for rows.Next() {
+		var p PeerResponse
+		rows.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.User, &p.Database, &p.SSLMode)
+		peers = append(peers, p)
+	}
+
+	if peers == nil {
+		peers = []PeerResponse{}
+	}
+
+	writeJSON(w, http.StatusOK, peers)
+}
+
+// GetPeer gets a single peer by name
+func (h *Handler) GetPeer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	peerName := r.PathValue("name")
+
+	if peerName == "" {
+		writeError(w, http.StatusBadRequest, "peer name is required")
+		return
+	}
+
+	var p PeerResponse
+	err := h.CatalogPool.QueryRow(ctx, `
+		SELECT id, name, host, port, username, database, ssl_mode
+		FROM bunny_internal.peers
+		WHERE name = $1
+	`, peerName).Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.User, &p.Database, &p.SSLMode)
+
+	if err != nil {
+		writeError(w, http.StatusNotFound, "peer not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, p)
+}
+
+// DeletePeer deletes a peer connection
+func (h *Handler) DeletePeer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	peerName := r.PathValue("name")
+
+	if peerName == "" {
+		writeError(w, http.StatusBadRequest, "peer name is required")
+		return
+	}
+
+	result, err := h.CatalogPool.Exec(ctx, `
+		DELETE FROM bunny_internal.peers WHERE name = $1
+	`, peerName)
+
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete peer")
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "peer not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// TestPeer tests connectivity to a peer
+func (h *Handler) TestPeer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	peerName := r.PathValue("name")
+
+	if peerName == "" {
+		writeError(w, http.StatusBadRequest, "peer name is required")
+		return
+	}
+
+	var host, user, password, database, sslMode string
+	var port int
+	err := h.CatalogPool.QueryRow(ctx, `
+		SELECT host, port, username, password, database, ssl_mode
+		FROM bunny_internal.peers
+		WHERE name = $1
+	`, peerName).Scan(&host, &port, &user, &password, &database, &sslMode)
+
+	if err != nil {
+		writeError(w, http.StatusNotFound, "peer not found")
+		return
+	}
+
+	connStr := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		user, password, host, port, database, sslMode)
+
+	testCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(testCtx, connStr)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+	defer pool.Close()
+
+	var version string
+	err = pool.QueryRow(ctx, "SELECT version()").Scan(&version)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"version": version,
+	})
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 
@@ -483,6 +692,13 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 // RegisterRoutes registers all API routes
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	// Peer CRUD
+	mux.HandleFunc("POST /v1/peers", h.CreatePeer)
+	mux.HandleFunc("GET /v1/peers", h.ListPeers)
+	mux.HandleFunc("GET /v1/peers/{name}", h.GetPeer)
+	mux.HandleFunc("DELETE /v1/peers/{name}", h.DeletePeer)
+	mux.HandleFunc("POST /v1/peers/{name}/test", h.TestPeer)
+
 	// Mirror CRUD
 	mux.HandleFunc("POST /v1/mirrors", h.CreateMirror)
 	mux.HandleFunc("GET /v1/mirrors", h.ListMirrors)
