@@ -61,11 +61,30 @@ func (a *Activities) StartSnapshotSession(ctx context.Context, input *StartSnaps
 		return nil, fmt.Errorf("failed to get source peer config: %w", err)
 	}
 
-	// Create a raw pgx connection (not through our connector, to have direct control)
-	connString := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		srcConfig.Host, srcConfig.Port, srcConfig.User, srcConfig.Password, srcConfig.Database, srcConfig.SSLMode,
-	)
+	// Determine SSL mode
+	sslMode := srcConfig.SSLMode
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+
+	// Build connection string - match the same pattern as NewPostgresConnector
+	var connString string
+	if srcConfig.Password != "" {
+		connString = fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			srcConfig.Host, srcConfig.Port, srcConfig.User, srcConfig.Password, srcConfig.Database, sslMode,
+		)
+	} else {
+		connString = fmt.Sprintf(
+			"host=%s port=%d user=%s dbname=%s sslmode=%s",
+			srcConfig.Host, srcConfig.Port, srcConfig.User, srcConfig.Database, sslMode,
+		)
+	}
+
+	logger.Info("connecting to source for snapshot session",
+		slog.String("host", srcConfig.Host),
+		slog.Int("port", srcConfig.Port),
+		slog.String("database", srcConfig.Database))
 
 	conn, err := pgx.Connect(ctx, connString)
 	if err != nil {
