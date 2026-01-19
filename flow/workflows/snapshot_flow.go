@@ -71,67 +71,54 @@ func SnapshotFlowWorkflow(ctx workflow.Context, input *SnapshotFlowInput) error 
 		}
 	}
 
-	// Step 2: Clone tables in parallel
+	// Step 2: Clone tables in parallel using Temporal's workflow primitives
 	logger.Info("starting parallel table cloning",
 		slog.Int("parallelism", int(input.NumTablesInParallel)))
 
-	// Create a semaphore to limit parallel table clones
-	sem := make(chan struct{}, input.NumTablesInParallel)
-	errChan := make(chan error, len(input.TableMappings))
-	doneChan := make(chan struct{}, len(input.TableMappings))
-
+	// Execute child workflows for all tables and collect futures
+	var childFutures []workflow.ChildWorkflowFuture
 	for _, tm := range input.TableMappings {
 		mapping := tm // Capture for closure
+		tableName := mapping.FullSourceName()
 
-		// Spawn child workflow for each table
-		workflow.Go(ctx, func(ctx workflow.Context) {
-			sem <- struct{}{} // Acquire semaphore
-			defer func() { <-sem }() // Release semaphore
+		childOpts := workflow.ChildWorkflowOptions{
+			WorkflowID: fmt.Sprintf("clone-%s-%s", input.MirrorName, tableName),
+			RetryPolicy: &temporal.RetryPolicy{
+				MaximumAttempts: 3,
+			},
+		}
+		childCtx := workflow.WithChildOptions(ctx, childOpts)
 
-			tableName := mapping.FullSourceName()
-			logger.Info("cloning table", slog.String("table", tableName))
-
-			childOpts := workflow.ChildWorkflowOptions{
-				WorkflowID: fmt.Sprintf("clone-%s-%s", input.MirrorName, tableName),
-				RetryPolicy: &temporal.RetryPolicy{
-					MaximumAttempts: 3,
-				},
-			}
-			childCtx := workflow.WithChildOptions(ctx, childOpts)
-
-			err := workflow.ExecuteChildWorkflow(childCtx, CloneTableWorkflow, &CloneTableInput{
-				MirrorName:          input.MirrorName,
-				SourcePeer:          input.SourcePeer,
-				DestinationPeer:     input.DestinationPeer,
-				TableMapping:        mapping,
-				SnapshotName:        input.SnapshotName,
-				NumRowsPerPartition: input.NumRowsPerPartition,
-				MaxParallelWorkers:  input.MaxParallelWorkers,
-			}).Get(childCtx, nil)
-
-			if err != nil {
-				errChan <- fmt.Errorf("failed to clone table %s: %w", tableName, err)
-			}
-			doneChan <- struct{}{}
+		logger.Info("starting table clone", slog.String("table", tableName))
+		future := workflow.ExecuteChildWorkflow(childCtx, CloneTableWorkflow, &CloneTableInput{
+			MirrorName:          input.MirrorName,
+			SourcePeer:          input.SourcePeer,
+			DestinationPeer:     input.DestinationPeer,
+			TableMapping:        mapping,
+			SnapshotName:        input.SnapshotName,
+			NumRowsPerPartition: input.NumRowsPerPartition,
+			MaxParallelWorkers:  input.MaxParallelWorkers,
 		})
+		childFutures = append(childFutures, future)
 	}
 
-	// Wait for all tables to complete
-	for i := 0; i < len(input.TableMappings); i++ {
-		select {
-		case err := <-errChan:
-			// Log error but continue with other tables
-			logger.Error("table clone error", slog.Any("error", err))
-		case <-doneChan:
-			// Table completed
+	// Wait for all child workflows to complete
+	var firstErr error
+	for i, future := range childFutures {
+		tableName := input.TableMappings[i].FullSourceName()
+		err := future.Get(ctx, nil)
+		if err != nil {
+			logger.Error("table clone error", slog.String("table", tableName), slog.Any("error", err))
+			if firstErr == nil {
+				firstErr = fmt.Errorf("failed to clone table %s: %w", tableName, err)
+			}
+		} else {
+			logger.Info("table clone completed", slog.String("table", tableName))
 		}
 	}
 
-	// Check for any errors
-	select {
-	case err := <-errChan:
-		return err
-	default:
+	if firstErr != nil {
+		return firstErr
 	}
 
 	// Step 3: Create indexes on destination
@@ -231,49 +218,34 @@ func CloneTableWorkflow(ctx workflow.Context, input *CloneTableInput) error {
 			return fmt.Errorf("failed to copy table: %w", err)
 		}
 	} else {
-		// Copy partitions in parallel
+		// Copy partitions in parallel using Temporal futures
 		logger.Info("copying table with partitioning",
 			slog.String("table", tableName),
 			slog.Int("partitions", int(partitions.NumPartitions)),
 			slog.Int("workers", int(input.MaxParallelWorkers)))
 
-		sem := make(chan struct{}, input.MaxParallelWorkers)
-		errChan := make(chan error, partitions.NumPartitions)
-		doneChan := make(chan struct{}, partitions.NumPartitions)
-
+		// Execute all partition copies and collect futures
+		var partitionFutures []workflow.Future
 		for i := uint32(0); i < partitions.NumPartitions; i++ {
-			partNum := i
-
-			workflow.Go(ctx, func(ctx workflow.Context) {
-				sem <- struct{}{}
-				defer func() { <-sem }()
-
-				err := workflow.ExecuteActivity(ctx, activities.CopyPartitionActivity, &activities.CopyPartitionInput{
-					MirrorName:      input.MirrorName,
-					SourcePeer:      input.SourcePeer,
-					DestinationPeer: input.DestinationPeer,
-					TableMapping:    input.TableMapping,
-					SnapshotName:    input.SnapshotName,
-					PartitionKey:    partitions.PartitionKey,
-					PartitionNum:    partNum,
-					TotalPartitions: partitions.NumPartitions,
-					MinValue:        partitions.MinValue,
-					MaxValue:        partitions.MaxValue,
-				}).Get(ctx, nil)
-
-				if err != nil {
-					errChan <- err
-				}
-				doneChan <- struct{}{}
+			future := workflow.ExecuteActivity(ctx, activities.CopyPartitionActivity, &activities.CopyPartitionInput{
+				MirrorName:      input.MirrorName,
+				SourcePeer:      input.SourcePeer,
+				DestinationPeer: input.DestinationPeer,
+				TableMapping:    input.TableMapping,
+				SnapshotName:    input.SnapshotName,
+				PartitionKey:    partitions.PartitionKey,
+				PartitionNum:    i,
+				TotalPartitions: partitions.NumPartitions,
+				MinValue:        partitions.MinValue,
+				MaxValue:        partitions.MaxValue,
 			})
+			partitionFutures = append(partitionFutures, future)
 		}
 
-		// Wait for all partitions
-		for i := uint32(0); i < partitions.NumPartitions; i++ {
-			select {
-			case err := <-errChan:
-				return fmt.Errorf("failed to copy partition: %w", err)
-			case <-doneChan:
+		// Wait for all partitions to complete
+		for i, future := range partitionFutures {
+			if err := future.Get(ctx, nil); err != nil {
+				return fmt.Errorf("failed to copy partition %d: %w", i, err)
 			}
 		}
 	}
