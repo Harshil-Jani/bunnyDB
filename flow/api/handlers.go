@@ -680,7 +680,14 @@ func (h *Handler) TestPeer(w http.ResponseWriter, r *http.Request) {
 // Helper Functions
 // ============================================================================
 
+func setCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+}
+
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	setCORSHeaders(w)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
@@ -690,28 +697,46 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
+// corsMiddleware wraps a handler to add CORS support
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w)
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // RegisterRoutes registers all API routes
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	// CORS preflight handler for all routes
+	mux.HandleFunc("OPTIONS /", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w)
+		w.WriteHeader(http.StatusOK)
+	})
+
 	// Peer CRUD
-	mux.HandleFunc("POST /v1/peers", h.CreatePeer)
-	mux.HandleFunc("GET /v1/peers", h.ListPeers)
-	mux.HandleFunc("GET /v1/peers/{name}", h.GetPeer)
-	mux.HandleFunc("DELETE /v1/peers/{name}", h.DeletePeer)
-	mux.HandleFunc("POST /v1/peers/{name}/test", h.TestPeer)
+	mux.HandleFunc("POST /v1/peers", corsMiddleware(h.CreatePeer))
+	mux.HandleFunc("GET /v1/peers", corsMiddleware(h.ListPeers))
+	mux.HandleFunc("GET /v1/peers/{name}", corsMiddleware(h.GetPeer))
+	mux.HandleFunc("DELETE /v1/peers/{name}", corsMiddleware(h.DeletePeer))
+	mux.HandleFunc("POST /v1/peers/{name}/test", corsMiddleware(h.TestPeer))
 
 	// Mirror CRUD
-	mux.HandleFunc("POST /v1/mirrors", h.CreateMirror)
-	mux.HandleFunc("GET /v1/mirrors", h.ListMirrors)
-	mux.HandleFunc("GET /v1/mirrors/{name}", h.GetMirrorStatus)
-	mux.HandleFunc("DELETE /v1/mirrors/{name}", h.DeleteMirror)
+	mux.HandleFunc("POST /v1/mirrors", corsMiddleware(h.CreateMirror))
+	mux.HandleFunc("GET /v1/mirrors", corsMiddleware(h.ListMirrors))
+	mux.HandleFunc("GET /v1/mirrors/{name}", corsMiddleware(h.GetMirrorStatus))
+	mux.HandleFunc("DELETE /v1/mirrors/{name}", corsMiddleware(h.DeleteMirror))
 
 	// Mirror control
-	mux.HandleFunc("POST /v1/mirrors/{name}/pause", h.PauseMirror)
-	mux.HandleFunc("POST /v1/mirrors/{name}/resume", h.ResumeMirror)
-	mux.HandleFunc("POST /v1/mirrors/{name}/resync", h.ResyncMirror)
-	mux.HandleFunc("POST /v1/mirrors/{name}/resync/{table}", h.ResyncMirror) // Table-level resync
-	mux.HandleFunc("POST /v1/mirrors/{name}/retry", h.RetryMirror)
-	mux.HandleFunc("POST /v1/mirrors/{name}/sync-schema", h.SyncSchema)
+	mux.HandleFunc("POST /v1/mirrors/{name}/pause", corsMiddleware(h.PauseMirror))
+	mux.HandleFunc("POST /v1/mirrors/{name}/resume", corsMiddleware(h.ResumeMirror))
+	mux.HandleFunc("POST /v1/mirrors/{name}/resync", corsMiddleware(h.ResyncMirror))
+	mux.HandleFunc("POST /v1/mirrors/{name}/resync/{table}", corsMiddleware(h.ResyncMirror))
+	mux.HandleFunc("POST /v1/mirrors/{name}/retry", corsMiddleware(h.RetryMirror))
+	mux.HandleFunc("POST /v1/mirrors/{name}/sync-schema", corsMiddleware(h.SyncSchema))
 
 	// Health check
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
