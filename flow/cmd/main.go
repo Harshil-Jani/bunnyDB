@@ -137,14 +137,11 @@ func runWorker(config *shared.Config, catalogPool *pgxpool.Pool, temporalClient 
 	w.RegisterActivity(acts.CopyPartition)
 
 	// Graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
-
 		slog.Info("shutting down worker")
-		cancel()
 	}()
 
 	slog.Info("worker listening", slog.String("taskQueue", config.WorkerTaskQueue))
