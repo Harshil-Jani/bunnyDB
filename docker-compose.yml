@@ -1,0 +1,130 @@
+name: bunnydb
+
+x-catalog-config: &catalog-config
+  BUNNY_CATALOG_HOST: catalog
+  BUNNY_CATALOG_PORT: 5432
+  BUNNY_CATALOG_USER: postgres
+  BUNNY_CATALOG_PASSWORD: bunnydb
+  BUNNY_CATALOG_DATABASE: bunnydb
+
+x-temporal-config: &temporal-config
+  TEMPORAL_HOST_PORT: temporal:7233
+  TEMPORAL_NAMESPACE: default
+
+services:
+  catalog:
+    container_name: bunny-catalog
+    image: postgres:16-alpine
+    command: -c config_file=/etc/postgresql.conf
+    restart: unless-stopped
+    ports:
+      - 5433:5432
+    environment:
+      PGUSER: postgres
+      POSTGRES_PASSWORD: bunnydb
+      POSTGRES_DB: bunnydb
+      POSTGRES_INITDB_ARGS: --locale=C.UTF-8
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - bunny-pgdata:/var/lib/postgresql/data
+      - ./volumes/postgresql.conf:/etc/postgresql.conf
+      - ./volumes/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "pg_isready", "-d", "bunnydb", "-U", "postgres"]
+      interval: 10s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+
+  temporal:
+    container_name: bunny-temporal
+    restart: unless-stopped
+    depends_on:
+      catalog:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PWD=bunnydb
+      - POSTGRES_SEEDS=catalog
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    image: temporalio/auto-setup:1.24
+    ports:
+      - 7233:7233
+    volumes:
+      - ./volumes/temporal-dynamicconfig:/etc/temporal/config/dynamicconfig
+
+  temporal-ui:
+    container_name: bunny-temporal-ui
+    restart: unless-stopped
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+      - TEMPORAL_CSRF_COOKIE_INSECURE=true
+    image: temporalio/ui:2.26.2
+    ports:
+      - 8085:8080
+
+  bunny-api:
+    container_name: bunny-api
+    build:
+      context: ./flow
+      dockerfile: Dockerfile
+    command: ["./bunny", "api"]
+    restart: unless-stopped
+    ports:
+      - 8112:8112
+      - 8113:8113
+    environment:
+      <<: [*catalog-config, *temporal-config]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      catalog:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+  bunny-worker:
+    container_name: bunny-worker
+    build:
+      context: ./flow
+      dockerfile: Dockerfile
+    command: ["./bunny", "worker"]
+    restart: unless-stopped
+    environment:
+      <<: [*catalog-config, *temporal-config]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      catalog:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+  bunny-ui:
+    container_name: bunny-ui
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - 3000:3000
+    environment:
+      <<: *catalog-config
+      BUNNY_API_URL: http://bunny-api:8112
+      NEXTAUTH_SECRET: __changeme__
+      NEXTAUTH_URL: http://localhost:3000
+    depends_on:
+      - bunny-api
+
+volumes:
+  bunny-pgdata:
+
+networks:
+  default:
+    name: bunnydb_network
