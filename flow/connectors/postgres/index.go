@@ -21,6 +21,12 @@ type IndexDefinition struct {
 	WhereClause *string  // For partial indexes
 }
 
+// indexWithOID is an internal struct to hold index data with OID
+type indexWithOID struct {
+	idx IndexDefinition
+	oid uint32
+}
+
 // GetIndexes returns all indexes for a given table
 func (c *PostgresConnector) GetIndexes(ctx context.Context, schemaName, tableName string) ([]IndexDefinition, error) {
 	query := `
@@ -49,9 +55,9 @@ func (c *PostgresConnector) GetIndexes(ctx context.Context, schemaName, tableNam
 	if err != nil {
 		return nil, fmt.Errorf("failed to query indexes: %w", err)
 	}
-	defer rows.Close()
 
-	var indexes []IndexDefinition
+	// Collect all index rows first (close rows before making more queries)
+	var indexesWithOIDs []indexWithOID
 	for rows.Next() {
 		var idx IndexDefinition
 		var indexOID uint32
@@ -67,20 +73,30 @@ func (c *PostgresConnector) GetIndexes(ctx context.Context, schemaName, tableNam
 			&idx.IndexType,
 			&idx.WhereClause,
 		); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("failed to scan index: %w", err)
 		}
 
-		// Get column names for this index
-		cols, err := c.getIndexColumns(ctx, indexOID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get index columns for %s: %w", idx.Name, err)
-		}
-		idx.Columns = cols
+		indexesWithOIDs = append(indexesWithOIDs, indexWithOID{idx: idx, oid: indexOID})
+	}
+	rows.Close() // Close rows before making more queries
 
-		indexes = append(indexes, idx)
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
-	return indexes, rows.Err()
+	// Now get columns for each index (connection is free now)
+	indexes := make([]IndexDefinition, len(indexesWithOIDs))
+	for i, iwo := range indexesWithOIDs {
+		cols, err := c.getIndexColumns(ctx, iwo.oid)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get index columns for %s: %w", iwo.idx.Name, err)
+		}
+		iwo.idx.Columns = cols
+		indexes[i] = iwo.idx
+	}
+
+	return indexes, nil
 }
 
 func (c *PostgresConnector) getIndexColumns(ctx context.Context, indexOID uint32) ([]string, error) {

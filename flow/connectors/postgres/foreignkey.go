@@ -65,8 +65,8 @@ func (c *PostgresConnector) GetForeignKeys(ctx context.Context, schemaName, tabl
 	if err != nil {
 		return nil, fmt.Errorf("failed to query foreign keys: %w", err)
 	}
-	defer rows.Close()
 
+	// Collect all FK rows first (close rows before making more queries)
 	var fks []ForeignKeyDefinition
 	for rows.Next() {
 		var fk ForeignKeyDefinition
@@ -83,27 +83,36 @@ func (c *PostgresConnector) GetForeignKeys(ctx context.Context, schemaName, tabl
 			&fk.OnDelete,
 			&fk.OnUpdate,
 		); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("failed to scan foreign key: %w", err)
 		}
 
-		// Get source columns
-		srcCols, err := c.getFKColumns(ctx, schemaName, tableName, fk.Name, true)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get FK source columns for %s: %w", fk.Name, err)
-		}
-		fk.SourceColumns = srcCols
-
-		// Get target columns
-		tgtCols, err := c.getFKColumns(ctx, schemaName, tableName, fk.Name, false)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get FK target columns for %s: %w", fk.Name, err)
-		}
-		fk.TargetColumns = tgtCols
-
 		fks = append(fks, fk)
 	}
+	rows.Close() // Close rows before making more queries
 
-	return fks, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Now get columns for each FK (connection is free now)
+	for i := range fks {
+		// Get source columns
+		srcCols, err := c.getFKColumns(ctx, schemaName, tableName, fks[i].Name, true)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get FK source columns for %s: %w", fks[i].Name, err)
+		}
+		fks[i].SourceColumns = srcCols
+
+		// Get target columns
+		tgtCols, err := c.getFKColumns(ctx, schemaName, tableName, fks[i].Name, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get FK target columns for %s: %w", fks[i].Name, err)
+		}
+		fks[i].TargetColumns = tgtCols
+	}
+
+	return fks, nil
 }
 
 func (c *PostgresConnector) getFKColumns(ctx context.Context, schemaName, tableName, constraintName string, isSource bool) ([]string, error) {
