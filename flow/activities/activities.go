@@ -525,6 +525,13 @@ func (a *Activities) CopyTable(ctx context.Context, input *CopyTableInput) error
 		return fmt.Errorf("failed to create destination table: %w", err)
 	}
 
+	// Truncate destination table before copying (in case it already has data)
+	truncateSQL := fmt.Sprintf("TRUNCATE TABLE %s.%s CASCADE",
+		input.TableMapping.DestinationSchema, input.TableMapping.DestinationTable)
+	if _, err := dstConn.Conn().Exec(ctx, truncateSQL); err != nil {
+		logger.Warn("failed to truncate destination table (may not exist)", slog.Any("error", err))
+	}
+
 	// Start a REPEATABLE READ transaction on source for snapshot consistency
 	// This is REQUIRED before SET TRANSACTION SNAPSHOT can be used
 	srcTx, err := srcConn.Conn().Begin(ctx)
@@ -1267,6 +1274,13 @@ func (a *Activities) CopyPartition(ctx context.Context, input *CopyPartitionInpu
 
 		if err := dstConn.CreateTableFromSchema(ctx, srcSchema, input.TableMapping.DestinationSchema, input.TableMapping.DestinationTable); err != nil {
 			return fmt.Errorf("failed to create destination table: %w", err)
+		}
+
+		// Truncate destination table before copying (in case it already has data)
+		truncateSQL := fmt.Sprintf("TRUNCATE TABLE %s.%s CASCADE",
+			input.TableMapping.DestinationSchema, input.TableMapping.DestinationTable)
+		if _, err := dstConn.Conn().Exec(ctx, truncateSQL); err != nil {
+			logger.Warn("failed to truncate destination table (may not exist)", slog.Any("error", err))
 		}
 	}
 
