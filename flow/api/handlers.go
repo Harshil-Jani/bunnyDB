@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -123,6 +124,11 @@ type PeerResponse struct {
 // RetryRequest is the request to retry
 type RetryRequest struct {
 	SkipBackoff bool `json:"skip_backoff"`
+}
+
+// UpdateTablesRequest is the request to update mirror tables
+type UpdateTablesRequest struct {
+	TableMappings []TableMappingInput `json:"table_mappings"`
 }
 
 // ============================================================================
@@ -571,6 +577,201 @@ func (h *Handler) SyncSchema(w http.ResponseWriter, r *http.Request) {
 		Status:  "SYNCING_SCHEMA",
 		Message: "schema sync signal sent",
 	})
+}
+
+// GetMirrorTables returns the table mappings for a mirror
+func (h *Handler) GetMirrorTables(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	mirrorName := r.PathValue("name")
+
+	if mirrorName == "" {
+		writeError(w, http.StatusBadRequest, "mirror name is required")
+		return
+	}
+
+	// Get mirror config from database
+	var configJSON []byte
+	err := h.CatalogPool.QueryRow(ctx, `
+		SELECT config FROM bunny_internal.mirrors WHERE name = $1
+	`, mirrorName).Scan(&configJSON)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "mirror not found")
+		return
+	}
+
+	// Parse config to get table mappings
+	var config map[string]interface{}
+	if err := json.Unmarshal(configJSON, &config); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to parse mirror config")
+		return
+	}
+
+	// Also get current table sync status
+	rows, err := h.CatalogPool.Query(ctx, `
+		SELECT table_name, status, rows_synced, last_synced_at
+		FROM bunny_stats.table_sync_status
+		WHERE mirror_name = $1
+	`, mirrorName)
+	if err != nil {
+		slog.Warn("failed to query table status", slog.Any("error", err))
+	}
+
+	var tables []TableStatusResponse
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var ts TableStatusResponse
+			rows.Scan(&ts.TableName, &ts.Status, &ts.RowsSynced, &ts.LastSyncedAt)
+			tables = append(tables, ts)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"config": config,
+		"tables": tables,
+	})
+}
+
+// UpdateMirrorTables updates the table mappings for a paused mirror
+func (h *Handler) UpdateMirrorTables(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	mirrorName := r.PathValue("name")
+
+	if mirrorName == "" {
+		writeError(w, http.StatusBadRequest, "mirror name is required")
+		return
+	}
+
+	// Check if mirror is paused
+	var status string
+	err := h.CatalogPool.QueryRow(ctx, `
+		SELECT status FROM bunny_internal.mirror_state WHERE mirror_name = $1
+	`, mirrorName).Scan(&status)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "mirror not found")
+		return
+	}
+
+	if status != "PAUSED" {
+		writeError(w, http.StatusBadRequest, "mirror must be paused to update tables")
+		return
+	}
+
+	// Parse request
+	var req UpdateTablesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if len(req.TableMappings) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one table mapping is required")
+		return
+	}
+
+	// Get source peer to update publication
+	var sourcePeerName string
+	err = h.CatalogPool.QueryRow(ctx, `
+		SELECT p.name FROM bunny_internal.mirrors m
+		JOIN bunny_internal.peers p ON m.source_peer_id = p.id
+		WHERE m.name = $1
+	`, mirrorName).Scan(&sourcePeerName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get source peer")
+		return
+	}
+
+	// Get source peer connection info
+	var host, user, password, database, sslMode string
+	var port int
+	err = h.CatalogPool.QueryRow(ctx, `
+		SELECT host, port, username, password, database, ssl_mode
+		FROM bunny_internal.peers WHERE name = $1
+	`, sourcePeerName).Scan(&host, &port, &user, &password, &database, &sslMode)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get peer config")
+		return
+	}
+
+	// Get publication name
+	var publicationName string
+	err = h.CatalogPool.QueryRow(ctx, `
+		SELECT publication_name FROM bunny_internal.mirror_state WHERE mirror_name = $1
+	`, mirrorName).Scan(&publicationName)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get publication name")
+		return
+	}
+
+	// Build table list for publication
+	var tables []string
+	for _, tm := range req.TableMappings {
+		tables = append(tables, fmt.Sprintf("%s.%s", tm.SourceSchema, tm.SourceTable))
+	}
+
+	// Connect to source and update publication
+	connStr := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		user, password, host, port, database, sslMode)
+
+	updateCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(updateCtx, connStr)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to connect to source: %s", err.Error()))
+		return
+	}
+	defer pool.Close()
+
+	// Update publication to use new tables
+	alterSQL := fmt.Sprintf("ALTER PUBLICATION %s SET TABLE %s", publicationName, joinTables(tables))
+	_, err = pool.Exec(updateCtx, alterSQL)
+	if err != nil {
+		slog.Error("failed to update publication", slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update publication: %s", err.Error()))
+		return
+	}
+
+	// Update mirror config in database
+	configJSON, _ := json.Marshal(map[string]interface{}{
+		"table_mappings": req.TableMappings,
+	})
+
+	_, err = h.CatalogPool.Exec(ctx, `
+		UPDATE bunny_internal.mirrors SET config = config || $2, updated_at = NOW()
+		WHERE name = $1
+	`, mirrorName, configJSON)
+	if err != nil {
+		slog.Warn("failed to update mirror config", slog.Any("error", err))
+	}
+
+	// Log the update
+	h.WriteMirrorLog(ctx, mirrorName, "INFO", "Tables updated", map[string]interface{}{
+		"table_count": len(req.TableMappings),
+		"tables":      tables,
+	})
+
+	slog.Info("mirror tables updated",
+		slog.String("mirror", mirrorName),
+		slog.Int("tableCount", len(req.TableMappings)))
+
+	writeJSON(w, http.StatusOK, MirrorResponse{
+		Name:    mirrorName,
+		Status:  "PAUSED",
+		Message: fmt.Sprintf("tables updated (%d tables)", len(req.TableMappings)),
+	})
+}
+
+func joinTables(tables []string) string {
+	if len(tables) == 0 {
+		return ""
+	}
+	result := make([]string, len(tables))
+	for i, t := range tables {
+		// Tables should already be in schema.table format
+		result[i] = t
+	}
+	return strings.Join(result, ", ")
 }
 
 // ListMirrors lists all mirrors
@@ -1075,6 +1276,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/mirrors/{name}/retry", corsMiddleware(h.RetryMirror))
 	mux.HandleFunc("POST /v1/mirrors/{name}/sync-schema", corsMiddleware(h.SyncSchema))
 	mux.HandleFunc("GET /v1/mirrors/{name}/logs", corsMiddleware(h.GetMirrorLogs))
+	mux.HandleFunc("GET /v1/mirrors/{name}/tables", corsMiddleware(h.GetMirrorTables))
+	mux.HandleFunc("PUT /v1/mirrors/{name}/tables", corsMiddleware(h.UpdateMirrorTables))
 
 	// Health check
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

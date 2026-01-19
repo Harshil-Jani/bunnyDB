@@ -160,19 +160,21 @@ export default function MirrorDetailPage() {
       case 'SYNCED':
         return 'bg-green-100 text-green-800 border-green-200';
       case 'PAUSED':
+      case 'PAUSING':
         return 'bg-yellow-100 text-yellow-800 border-yellow-200';
       case 'FAILED':
       case 'ERROR':
         return 'bg-red-100 text-red-800 border-red-200';
       case 'SNAPSHOT':
       case 'RESYNCING':
-      case 'SYNCING':
-      case 'SETTING_UP':
         return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'SETTING_UP':
+      case 'CREATED':
       case 'PENDING':
         return 'bg-gray-100 text-gray-800 border-gray-200';
       default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
+        // CDC/SYNCING/Other processing states - use orange
+        return 'bg-orange-100 text-orange-800 border-orange-200';
     }
   };
 
@@ -182,17 +184,21 @@ export default function MirrorDetailPage() {
       case 'SYNCED':
         return <CheckCircle className="w-5 h-5 text-green-500" />;
       case 'PAUSED':
+      case 'PAUSING':
         return <Pause className="w-5 h-5 text-yellow-500" />;
       case 'FAILED':
       case 'ERROR':
         return <AlertCircle className="w-5 h-5 text-red-500" />;
       case 'SNAPSHOT':
       case 'RESYNCING':
-      case 'SYNCING':
-      case 'SETTING_UP':
         return <RefreshCw className="w-5 h-5 text-blue-500 animate-spin" />;
-      default:
+      case 'SETTING_UP':
+      case 'CREATED':
+      case 'PENDING':
         return <Clock className="w-5 h-5 text-gray-500" />;
+      default:
+        // CDC/SYNCING/Other processing states - use orange with animation
+        return <RefreshCw className="w-5 h-5 text-orange-500 animate-spin" />;
     }
   };
 

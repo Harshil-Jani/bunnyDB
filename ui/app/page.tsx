@@ -67,6 +67,7 @@ export default function Home() {
       case 'RUNNING':
         return 'bg-green-100 text-green-800';
       case 'PAUSED':
+      case 'PAUSING':
         return 'bg-yellow-100 text-yellow-800';
       case 'FAILED':
       case 'ERROR':
@@ -74,8 +75,11 @@ export default function Home() {
       case 'SNAPSHOT':
       case 'RESYNCING':
         return 'bg-blue-100 text-blue-800';
-      default:
+      case 'SETTING_UP':
+      case 'CREATED':
         return 'bg-gray-100 text-gray-800';
+      default:
+        return 'bg-orange-100 text-orange-800';
     }
   };
 
@@ -84,6 +88,7 @@ export default function Home() {
       case 'RUNNING':
         return <CheckCircle className="w-4 h-4 text-green-500" />;
       case 'PAUSED':
+      case 'PAUSING':
         return <Pause className="w-4 h-4 text-yellow-500" />;
       case 'FAILED':
       case 'ERROR':
@@ -91,8 +96,11 @@ export default function Home() {
       case 'SNAPSHOT':
       case 'RESYNCING':
         return <RefreshCw className="w-4 h-4 text-blue-500 animate-spin" />;
-      default:
+      case 'SETTING_UP':
+      case 'CREATED':
         return <Clock className="w-4 h-4 text-gray-500" />;
+      default:
+        return <RefreshCw className="w-4 h-4 text-orange-500 animate-spin" />;
     }
   };
 

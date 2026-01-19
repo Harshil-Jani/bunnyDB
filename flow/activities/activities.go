@@ -325,6 +325,8 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 	lastLSN := input.LastLSN
 	lastHeartbeat := time.Now()
 	recordsProcessed := int64(0)
+	batchID := int64(0)
+	tableRowCounts := make(map[string]int64) // Track rows per table
 
 	logger.Info("CDC sync loop started",
 		slog.Int("batchSize", batchSize),
@@ -336,7 +338,7 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 			logger.Info("sync flow stopped",
 				slog.Int64("lastLSN", lastLSN),
 				slog.Int64("recordsProcessed", recordsProcessed))
-			return &SyncOutput{LastLSN: lastLSN}, ctx.Err()
+			return &SyncOutput{LastLSN: lastLSN, BatchID: batchID}, ctx.Err()
 		default:
 		}
 
@@ -350,7 +352,7 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 		records, newLSN, err := cdcReader.PullRecords(ctx, batchSize, 5*time.Second)
 		if err != nil {
 			if ctx.Err() != nil {
-				return &SyncOutput{LastLSN: lastLSN}, ctx.Err()
+				return &SyncOutput{LastLSN: lastLSN, BatchID: batchID}, ctx.Err()
 			}
 			logger.Error("failed to pull records", slog.Any("error", err))
 			// Sleep briefly before retrying
@@ -378,6 +380,7 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 			}
 
 			recordsProcessed++
+			tableRowCounts[tableKey]++
 
 			if recordsProcessed%100 == 0 {
 				logger.Debug("CDC progress",
@@ -386,17 +389,41 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 			}
 		}
 
-		// Update LSN
+		// Update table sync status periodically (every batch)
+		if len(records) > 0 {
+			for tableName, rowCount := range tableRowCounts {
+				_, err := a.CatalogPool.Exec(ctx, `
+					INSERT INTO bunny_stats.table_sync_status (mirror_name, table_name, status, rows_synced, last_synced_at)
+					VALUES ($1, $2, 'RUNNING', $3, NOW())
+					ON CONFLICT (mirror_name, table_name) DO UPDATE SET
+						status = 'RUNNING',
+						rows_synced = bunny_stats.table_sync_status.rows_synced + $3,
+						last_synced_at = NOW(),
+						updated_at = NOW()
+				`, input.MirrorName, tableName, rowCount)
+				if err != nil {
+					logger.Warn("failed to update table sync status", slog.String("table", tableName), slog.Any("error", err))
+				}
+			}
+			// Reset counts after updating
+			tableRowCounts = make(map[string]int64)
+		}
+
+		// Update LSN and batch ID
 		if newLSN > lastLSN {
 			lastLSN = newLSN
+			batchID++
 			srcConn.UpdateLastOffset(lastLSN)
 
-			// Update checkpoint in catalog
+			// Update checkpoint and status in mirror_state
 			_, err := a.CatalogPool.Exec(ctx, `
-				UPDATE bunny_internal.mirrors
-				SET updated_at = NOW()
-				WHERE name = $1
-			`, input.MirrorName)
+				UPDATE bunny_internal.mirror_state
+				SET last_lsn = $2,
+				    last_sync_batch_id = $3,
+				    status = 'RUNNING',
+				    updated_at = NOW()
+				WHERE mirror_name = $1
+			`, input.MirrorName, lastLSN, batchID)
 			if err != nil {
 				logger.Warn("failed to update mirror checkpoint", slog.Any("error", err))
 			}
@@ -407,6 +434,7 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 			logger.Info("batch processed",
 				slog.Int("records", len(records)),
 				slog.Int64("lastLSN", lastLSN),
+				slog.Int64("batchID", batchID),
 				slog.Int64("totalProcessed", recordsProcessed))
 
 			// Write to mirror logs
