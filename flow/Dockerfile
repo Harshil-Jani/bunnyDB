@@ -32,4 +32,4 @@ COPY --from=builder /app/bunny .
 RUN adduser -D -g '' bunny
 USER bunny
 
-ENTRYPOINT ["./bunny"]
+# No ENTRYPOINT - command specified in docker-compose
