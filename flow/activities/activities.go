@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/activity"
 
@@ -496,7 +497,7 @@ func (a *Activities) CopyTable(ctx context.Context, input *CopyTableInput) error
 		return fmt.Errorf("failed to get destination peer config: %w", err)
 	}
 
-	// Connect
+	// Connect - each copy operation uses its own dedicated connections
 	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
 	if err != nil {
 		return fmt.Errorf("failed to connect to source: %w", err)
@@ -509,17 +510,32 @@ func (a *Activities) CopyTable(ctx context.Context, input *CopyTableInput) error
 	}
 	defer dstConn.Close()
 
-	// If we have a snapshot name, set it
+	// Start a REPEATABLE READ transaction on source for snapshot consistency
+	// This is REQUIRED before SET TRANSACTION SNAPSHOT can be used
+	srcTx, err := srcConn.Conn().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin source transaction: %w", err)
+	}
+	defer srcTx.Rollback(ctx)
+
+	// Set isolation level FIRST - must be done before any queries
+	_, err = srcTx.Exec(ctx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+	if err != nil {
+		return fmt.Errorf("failed to set isolation level: %w", err)
+	}
+
+	// If we have a snapshot name, import it into this transaction
 	if input.SnapshotName != "" {
-		_, err = srcConn.Conn().Exec(ctx, fmt.Sprintf("SET TRANSACTION SNAPSHOT '%s'", input.SnapshotName))
+		_, err = srcTx.Exec(ctx, fmt.Sprintf("SET TRANSACTION SNAPSHOT '%s'", input.SnapshotName))
 		if err != nil {
-			logger.Warn("failed to set snapshot", slog.Any("error", err))
+			return fmt.Errorf("failed to set snapshot: %w", err)
 		}
+		logger.Info("snapshot imported", slog.String("snapshot", input.SnapshotName))
 	}
 
 	// Build query
 	srcTable := input.TableMapping.FullSourceName()
-	_ = input.TableMapping.FullDestinationName() // dstTable used in COPY TO destination
+	dstTable := input.TableMapping.FullDestinationName()
 
 	// Get columns (excluding any excluded columns)
 	columns := "*"
@@ -528,12 +544,75 @@ func (a *Activities) CopyTable(ctx context.Context, input *CopyTableInput) error
 	query := fmt.Sprintf("SELECT %s FROM %s", columns, srcTable)
 
 	// Copy data using COPY protocol for efficiency
-	// This is a simplified version - real implementation would use COPY TO/FROM
 	logger.Info("copying data", slog.String("query", query))
 
-	// Placeholder for actual COPY implementation
-	activity.RecordHeartbeat(ctx, "copying data...")
+	// Read from source within the snapshot transaction
+	rows, err := srcTx.Query(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to query source: %w", err)
+	}
+	defer rows.Close()
 
+	// Get column descriptions for building insert
+	fieldDescs := rows.FieldDescriptions()
+	colNames := make([]string, len(fieldDescs))
+	for i, fd := range fieldDescs {
+		colNames[i] = string(fd.Name)
+	}
+
+	// Build insert statement
+	placeholders := make([]string, len(colNames))
+	for i := range placeholders {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		dstTable,
+		strings.Join(colNames, ", "),
+		strings.Join(placeholders, ", "))
+
+	// Copy rows in batches
+	batchSize := 1000
+	batch := make([][]interface{}, 0, batchSize)
+
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			return fmt.Errorf("failed to get row values: %w", err)
+		}
+		batch = append(batch, values)
+
+		if len(batch) >= batchSize {
+			if err := a.insertBatch(ctx, dstConn.Conn(), insertSQL, batch); err != nil {
+				return fmt.Errorf("failed to insert batch: %w", err)
+			}
+			batch = batch[:0]
+			activity.RecordHeartbeat(ctx, "copying data...")
+		}
+	}
+
+	// Insert remaining rows
+	if len(batch) > 0 {
+		if err := a.insertBatch(ctx, dstConn.Conn(), insertSQL, batch); err != nil {
+			return fmt.Errorf("failed to insert final batch: %w", err)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error reading rows: %w", err)
+	}
+
+	logger.Info("table copy completed", slog.String("table", srcTable))
+	return nil
+}
+
+// insertBatch inserts a batch of rows
+func (a *Activities) insertBatch(ctx context.Context, conn *pgx.Conn, insertSQL string, batch [][]interface{}) error {
+	for _, values := range batch {
+		_, err := conn.Exec(ctx, insertSQL, values...)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1147,7 +1226,7 @@ func (a *Activities) CopyPartition(ctx context.Context, input *CopyPartitionInpu
 		return fmt.Errorf("failed to get destination peer config: %w", err)
 	}
 
-	// Connect
+	// Connect - each partition copy uses its own dedicated connections
 	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
 	if err != nil {
 		return fmt.Errorf("failed to connect to source: %w", err)
@@ -1160,16 +1239,30 @@ func (a *Activities) CopyPartition(ctx context.Context, input *CopyPartitionInpu
 	}
 	defer dstConn.Close()
 
-	// If we have a snapshot name, set it
-	if input.SnapshotName != "" {
-		_, err = srcConn.Conn().Exec(ctx, fmt.Sprintf("SET TRANSACTION SNAPSHOT '%s'", input.SnapshotName))
-		if err != nil {
-			logger.Warn("failed to set snapshot", slog.Any("error", err))
-		}
+	// Start a REPEATABLE READ transaction on source for snapshot consistency
+	// This is REQUIRED before SET TRANSACTION SNAPSHOT can be used
+	srcTx, err := srcConn.Conn().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin source transaction: %w", err)
+	}
+	defer srcTx.Rollback(ctx)
+
+	// Set isolation level FIRST - must be done before any queries
+	_, err = srcTx.Exec(ctx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+	if err != nil {
+		return fmt.Errorf("failed to set isolation level: %w", err)
 	}
 
-	// Copy data - for now do a full copy if no partition key
-	// In a real implementation, this would use OFFSET/LIMIT or partition key ranges
+	// If we have a snapshot name, import it into this transaction
+	if input.SnapshotName != "" {
+		_, err = srcTx.Exec(ctx, fmt.Sprintf("SET TRANSACTION SNAPSHOT '%s'", input.SnapshotName))
+		if err != nil {
+			return fmt.Errorf("failed to set snapshot: %w", err)
+		}
+		logger.Info("snapshot imported", slog.String("snapshot", input.SnapshotName))
+	}
+
+	// Build query for this partition
 	srcTable := input.TableMapping.FullSourceName()
 	dstTable := input.TableMapping.FullDestinationName()
 
@@ -1180,14 +1273,67 @@ func (a *Activities) CopyPartition(ctx context.Context, input *CopyPartitionInpu
 			srcTable, input.PartitionKey, input.TotalPartitions, input.PartitionNum)
 	}
 
-	// Execute copy - using INSERT ... SELECT for simplicity
-	// A real implementation would use COPY TO/FROM for better performance
-	copyQuery := fmt.Sprintf("INSERT INTO %s %s", dstTable, query)
-	_, err = dstConn.Conn().Exec(ctx, copyQuery)
+	// Read from source within the snapshot transaction
+	rows, err := srcTx.Query(ctx, query)
 	if err != nil {
-		return fmt.Errorf("failed to copy data: %w", err)
+		return fmt.Errorf("failed to query source: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column descriptions for building insert
+	fieldDescs := rows.FieldDescriptions()
+	colNames := make([]string, len(fieldDescs))
+	for i, fd := range fieldDescs {
+		colNames[i] = string(fd.Name)
 	}
 
-	activity.RecordHeartbeat(ctx, fmt.Sprintf("copied partition %d/%d", input.PartitionNum+1, input.TotalPartitions))
+	// Build insert statement
+	placeholders := make([]string, len(colNames))
+	for i := range placeholders {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		dstTable,
+		strings.Join(colNames, ", "),
+		strings.Join(placeholders, ", "))
+
+	// Copy rows in batches
+	batchSize := 1000
+	batch := make([][]interface{}, 0, batchSize)
+	rowCount := 0
+
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			return fmt.Errorf("failed to get row values: %w", err)
+		}
+		batch = append(batch, values)
+		rowCount++
+
+		if len(batch) >= batchSize {
+			if err := a.insertBatch(ctx, dstConn.Conn(), insertSQL, batch); err != nil {
+				return fmt.Errorf("failed to insert batch: %w", err)
+			}
+			batch = batch[:0]
+			activity.RecordHeartbeat(ctx, fmt.Sprintf("partition %d/%d: copied %d rows",
+				input.PartitionNum+1, input.TotalPartitions, rowCount))
+		}
+	}
+
+	// Insert remaining rows
+	if len(batch) > 0 {
+		if err := a.insertBatch(ctx, dstConn.Conn(), insertSQL, batch); err != nil {
+			return fmt.Errorf("failed to insert final batch: %w", err)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error reading rows: %w", err)
+	}
+
+	logger.Info("partition copy completed",
+		slog.Int("partition", int(input.PartitionNum)+1),
+		slog.Int("totalPartitions", int(input.TotalPartitions)),
+		slog.Int("rowCount", rowCount))
 	return nil
 }
