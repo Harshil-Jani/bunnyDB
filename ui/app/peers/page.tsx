@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, TestTube, Database, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Plus, Trash2, TestTube, Database, CheckCircle, XCircle, Loader2, Pencil } from 'lucide-react';
 
 interface Peer {
   id: number;
@@ -21,22 +21,25 @@ interface TestResult {
 
 const API_URL = process.env.BUNNY_API_URL || 'http://localhost:8112';
 
+const emptyFormData = {
+  name: '',
+  host: '',
+  port: 5432,
+  user: 'postgres',
+  password: '',
+  database: '',
+  ssl_mode: 'prefer',
+};
+
 export default function PeersPage() {
   const [peers, setPeers] = useState<Peer[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingPeer, setEditingPeer] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
   const [testing, setTesting] = useState<Record<string, boolean>>({});
 
-  const [formData, setFormData] = useState({
-    name: '',
-    host: '',
-    port: 5432,
-    user: 'postgres',
-    password: '',
-    database: '',
-    ssl_mode: 'prefer',
-  });
+  const [formData, setFormData] = useState(emptyFormData);
 
   const fetchPeers = async () => {
     try {
@@ -51,28 +54,50 @@ export default function PeersPage() {
     }
   };
 
-  const createPeer = async (e: React.FormEvent) => {
+  const openCreateForm = () => {
+    setFormData(emptyFormData);
+    setEditingPeer(null);
+    setShowForm(true);
+  };
+
+  const openEditForm = (peer: Peer) => {
+    setFormData({
+      name: peer.name,
+      host: peer.host,
+      port: peer.port,
+      user: peer.user,
+      password: '', // Don't show password
+      database: peer.database,
+      ssl_mode: peer.ssl_mode,
+    });
+    setEditingPeer(peer.name);
+    setShowForm(true);
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    setEditingPeer(null);
+    setFormData(emptyFormData);
+  };
+
+  const savePeer = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch(`${API_URL}/v1/peers`, {
-        method: 'POST',
+      const url = editingPeer
+        ? `${API_URL}/v1/peers/${editingPeer}`
+        : `${API_URL}/v1/peers`;
+      const method = editingPeer ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       });
-      if (!res.ok) throw new Error('Failed to create peer');
-      setShowForm(false);
-      setFormData({
-        name: '',
-        host: '',
-        port: 5432,
-        user: 'postgres',
-        password: '',
-        database: '',
-        ssl_mode: 'prefer',
-      });
+      if (!res.ok) throw new Error(`Failed to ${editingPeer ? 'update' : 'create'} peer`);
+      closeForm();
       fetchPeers();
     } catch (err) {
-      console.error('Failed to create peer:', err);
+      console.error(`Failed to ${editingPeer ? 'update' : 'create'} peer:`, err);
     }
   };
 
@@ -125,7 +150,7 @@ export default function PeersPage() {
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Peers</h1>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={openCreateForm}
           className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
         >
           <Plus className="w-4 h-4" />
@@ -133,14 +158,16 @@ export default function PeersPage() {
         </button>
       </div>
 
-      {/* Add Peer Form */}
+      {/* Add/Edit Peer Form */}
       {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
             <div className="p-6 border-b">
-              <h2 className="text-xl font-bold">Add Peer Connection</h2>
+              <h2 className="text-xl font-bold">
+                {editingPeer ? 'Edit Peer Connection' : 'Add Peer Connection'}
+              </h2>
             </div>
-            <form onSubmit={createPeer} className="p-6 space-y-4">
+            <form onSubmit={savePeer} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Name</label>
                 <input
@@ -150,7 +177,11 @@ export default function PeersPage() {
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
                   placeholder="my-postgres-source"
                   required
+                  disabled={!!editingPeer}
                 />
+                {editingPeer && (
+                  <p className="text-xs text-gray-500 mt-1">Name cannot be changed</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -160,7 +191,7 @@ export default function PeersPage() {
                     value={formData.host}
                     onChange={(e) => setFormData({ ...formData, host: e.target.value })}
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
-                    placeholder="localhost"
+                    placeholder="host.docker.internal"
                     required
                   />
                 </div>
@@ -187,12 +218,15 @@ export default function PeersPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Password</label>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Password {editingPeer && <span className="text-gray-400">(leave blank to keep)</span>}
+                  </label>
                   <input
                     type="password"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
+                    placeholder={editingPeer ? '••••••••' : ''}
                   />
                 </div>
               </div>
@@ -224,7 +258,7 @@ export default function PeersPage() {
               <div className="flex justify-end gap-2 pt-4">
                 <button
                   type="button"
-                  onClick={() => setShowForm(false)}
+                  onClick={closeForm}
                   className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
                 >
                   Cancel
@@ -233,7 +267,7 @@ export default function PeersPage() {
                   type="submit"
                   className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
                 >
-                  Create Peer
+                  {editingPeer ? 'Save Changes' : 'Create Peer'}
                 </button>
               </div>
             </form>
@@ -274,6 +308,13 @@ export default function PeersPage() {
                       <TestTube className="w-4 h-4" />
                     )}
                     Test
+                  </button>
+                  <button
+                    onClick={() => openEditForm(peer)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    Edit
                   </button>
                   <button
                     onClick={() => deletePeer(peer.name)}

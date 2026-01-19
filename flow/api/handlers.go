@@ -594,6 +594,62 @@ func (h *Handler) GetPeer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
+// UpdatePeer updates a peer connection
+func (h *Handler) UpdatePeer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	peerName := r.PathValue("name")
+
+	if peerName == "" {
+		writeError(w, http.StatusBadRequest, "peer name is required")
+		return
+	}
+
+	var req CreatePeerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Port == 0 {
+		req.Port = 5432
+	}
+	if req.SSLMode == "" {
+		req.SSLMode = "prefer"
+	}
+
+	result, err := h.CatalogPool.Exec(ctx, `
+		UPDATE bunny_internal.peers
+		SET host = $1, port = $2, username = $3, password = $4, database = $5, ssl_mode = $6
+		WHERE name = $7
+	`, req.Host, req.Port, req.User, req.Password, req.Database, req.SSLMode, peerName)
+
+	if err != nil {
+		slog.Error("failed to update peer", slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, "failed to update peer")
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "peer not found")
+		return
+	}
+
+	// Fetch updated peer to return
+	var p PeerResponse
+	err = h.CatalogPool.QueryRow(ctx, `
+		SELECT id, name, host, port, username, database, ssl_mode
+		FROM bunny_internal.peers
+		WHERE name = $1
+	`, peerName).Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.User, &p.Database, &p.SSLMode)
+
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch updated peer")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, p)
+}
+
 // DeletePeer deletes a peer connection
 func (h *Handler) DeletePeer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -721,6 +777,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/peers", corsMiddleware(h.CreatePeer))
 	mux.HandleFunc("GET /v1/peers", corsMiddleware(h.ListPeers))
 	mux.HandleFunc("GET /v1/peers/{name}", corsMiddleware(h.GetPeer))
+	mux.HandleFunc("PUT /v1/peers/{name}", corsMiddleware(h.UpdatePeer))
 	mux.HandleFunc("DELETE /v1/peers/{name}", corsMiddleware(h.DeletePeer))
 	mux.HandleFunc("POST /v1/peers/{name}/test", corsMiddleware(h.TestPeer))
 
