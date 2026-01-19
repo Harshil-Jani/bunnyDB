@@ -14,6 +14,27 @@ import (
 	"github.com/bunnydb/bunnydb/flow/shared"
 )
 
+// Activity name constants for use in workflows
+const (
+	SetupMirrorActivity              = "SetupMirror"
+	SyncFlowActivity                 = "SyncFlow"
+	DropForeignKeysActivity          = "DropForeignKeys"
+	RecreateForeignKeysActivity      = "RecreateForeignKeys"
+	CreateIndexesActivity            = "CreateIndexes"
+	CopyTableActivity                = "CopyTable"
+	UpdateTableSyncStatusActivity    = "UpdateTableSyncStatus"
+	DropSourceReplicationActivity    = "DropSourceReplication"
+	CleanupCatalogActivity           = "CleanupCatalog"
+	TruncateTableActivity            = "TruncateTable"
+	ExportSnapshotActivity           = "ExportSnapshot"
+	DropTableForeignKeysActivity     = "DropTableForeignKeys"
+	CreateTableIndexesActivity       = "CreateTableIndexes"
+	RecreateTableForeignKeysActivity = "RecreateTableForeignKeys"
+	DropDestinationTablesActivity    = "DropDestinationTables"
+	GetPartitionInfoActivity         = "GetPartitionInfo"
+	CopyPartitionActivity            = "CopyPartition"
+)
+
 // Activities holds the activity implementations
 type Activities struct {
 	CatalogPool *pgxpool.Pool

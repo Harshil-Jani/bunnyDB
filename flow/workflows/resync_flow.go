@@ -53,7 +53,7 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 	}
 
 	// Step 1: Mark table as resyncing in catalog
-	err := workflow.ExecuteActivity(ctx, activities.UpdateTableSyncStatus, &activities.UpdateTableStatusInput{
+	err := workflow.ExecuteActivity(ctx, activities.UpdateTableSyncStatusActivity, &activities.UpdateTableStatusInput{
 		MirrorName: input.MirrorName,
 		TableName:  input.TableName,
 		Status:     "RESYNCING",
@@ -64,7 +64,7 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 
 	// Step 2: Drop FKs referencing this table on destination
 	logger.Info("dropping foreign keys for table", slog.String("table", input.TableName))
-	err = workflow.ExecuteActivity(ctx, activities.DropTableForeignKeys, &activities.DropTableFKInput{
+	err = workflow.ExecuteActivity(ctx, activities.DropTableForeignKeysActivity, &activities.DropTableFKInput{
 		MirrorName:      input.MirrorName,
 		DestinationPeer: input.DestinationPeer,
 		TableName:       tableMapping.FullDestinationName(),
@@ -75,7 +75,7 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 
 	// Step 3: Truncate destination table
 	logger.Info("truncating destination table", slog.String("table", tableMapping.FullDestinationName()))
-	err = workflow.ExecuteActivity(ctx, activities.TruncateTable, &activities.TruncateTableInput{
+	err = workflow.ExecuteActivity(ctx, activities.TruncateTableActivity, &activities.TruncateTableInput{
 		MirrorName:      input.MirrorName,
 		DestinationPeer: input.DestinationPeer,
 		TableName:       tableMapping.FullDestinationName(),
@@ -86,7 +86,7 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 
 	// Step 4: Get current snapshot from source
 	var snapshotName string
-	err = workflow.ExecuteActivity(ctx, activities.ExportSnapshot, &activities.ExportSnapshotInput{
+	err = workflow.ExecuteActivity(ctx, activities.ExportSnapshotActivity, &activities.ExportSnapshotInput{
 		MirrorName: input.MirrorName,
 		SourcePeer: input.SourcePeer,
 	}).Get(ctx, &snapshotName)
@@ -98,7 +98,7 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 
 	// Step 5: Copy table data
 	logger.Info("copying table data", slog.String("table", input.TableName))
-	err = workflow.ExecuteActivity(ctx, activities.CopyTable, &activities.CopyTableInput{
+	err = workflow.ExecuteActivity(ctx, activities.CopyTableActivity, &activities.CopyTableInput{
 		MirrorName:      input.MirrorName,
 		SourcePeer:      input.SourcePeer,
 		DestinationPeer: input.DestinationPeer,
@@ -107,7 +107,7 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 	}).Get(ctx, nil)
 	if err != nil {
 		// Mark as error and continue with CDC
-		_ = workflow.ExecuteActivity(ctx, activities.UpdateTableSyncStatus, &activities.UpdateTableStatusInput{
+		_ = workflow.ExecuteActivity(ctx, activities.UpdateTableSyncStatusActivity, &activities.UpdateTableStatusInput{
 			MirrorName:   input.MirrorName,
 			TableName:    input.TableName,
 			Status:       "ERROR",
@@ -118,7 +118,7 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 
 	// Step 6: Recreate indexes for this table
 	logger.Info("recreating indexes for table", slog.String("table", input.TableName))
-	err = workflow.ExecuteActivity(ctx, activities.CreateTableIndexes, &activities.CreateTableIndexesInput{
+	err = workflow.ExecuteActivity(ctx, activities.CreateTableIndexesActivity, &activities.CreateTableIndexesInput{
 		MirrorName:      input.MirrorName,
 		SourcePeer:      input.SourcePeer,
 		DestinationPeer: input.DestinationPeer,
@@ -131,7 +131,7 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 
 	// Step 7: Recreate FKs for this table
 	logger.Info("recreating foreign keys for table", slog.String("table", input.TableName))
-	err = workflow.ExecuteActivity(ctx, activities.RecreateTableForeignKeys, &activities.RecreateTableFKInput{
+	err = workflow.ExecuteActivity(ctx, activities.RecreateTableForeignKeysActivity, &activities.RecreateTableFKInput{
 		MirrorName:      input.MirrorName,
 		SourcePeer:      input.SourcePeer,
 		DestinationPeer: input.DestinationPeer,
@@ -144,7 +144,7 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 	}
 
 	// Step 8: Mark table as synced
-	err = workflow.ExecuteActivity(ctx, activities.UpdateTableSyncStatus, &activities.UpdateTableStatusInput{
+	err = workflow.ExecuteActivity(ctx, activities.UpdateTableSyncStatusActivity, &activities.UpdateTableStatusInput{
 		MirrorName: input.MirrorName,
 		TableName:  input.TableName,
 		Status:     "SYNCED",
@@ -191,7 +191,7 @@ func DropFlowWorkflow(ctx workflow.Context, input *DropFlowInput) error {
 	ctx = workflow.WithActivityOptions(ctx, activityOpts)
 
 	// Step 1: Drop replication slot and publication on source
-	err := workflow.ExecuteActivity(ctx, activities.DropSourceReplication, &activities.DropSourceInput{
+	err := workflow.ExecuteActivity(ctx, activities.DropSourceReplicationActivity, &activities.DropSourceInput{
 		MirrorName: input.MirrorName,
 	}).Get(ctx, nil)
 	if err != nil {
@@ -200,7 +200,7 @@ func DropFlowWorkflow(ctx workflow.Context, input *DropFlowInput) error {
 
 	// Step 2: Optionally drop destination tables (for full drop, not resync)
 	if input.DropDestinationTables && !input.IsResync {
-		err = workflow.ExecuteActivity(ctx, activities.DropDestinationTables, &activities.DropDestinationInput{
+		err = workflow.ExecuteActivity(ctx, activities.DropDestinationTablesActivity, &activities.DropDestinationInput{
 			MirrorName: input.MirrorName,
 		}).Get(ctx, nil)
 		if err != nil {
@@ -209,7 +209,7 @@ func DropFlowWorkflow(ctx workflow.Context, input *DropFlowInput) error {
 	}
 
 	// Step 3: Clean up catalog entries
-	err = workflow.ExecuteActivity(ctx, activities.CleanupCatalog, &activities.CleanupCatalogInput{
+	err = workflow.ExecuteActivity(ctx, activities.CleanupCatalogActivity, &activities.CleanupCatalogInput{
 		MirrorName: input.MirrorName,
 		FullClean:  !input.IsResync,
 	}).Get(ctx, nil)

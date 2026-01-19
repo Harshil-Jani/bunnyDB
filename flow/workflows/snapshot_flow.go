@@ -60,7 +60,7 @@ func SnapshotFlowWorkflow(ctx workflow.Context, input *SnapshotFlowInput) error 
 		logger.Info("dropping foreign keys on destination for initial sync")
 
 		dropFKCtx := workflow.WithActivityOptions(ctx, activityOpts)
-		err := workflow.ExecuteActivity(dropFKCtx, activities.DropForeignKeys, &activities.DropFKInput{
+		err := workflow.ExecuteActivity(dropFKCtx, activities.DropForeignKeysActivity, &activities.DropFKInput{
 			MirrorName:      input.MirrorName,
 			DestinationPeer: input.DestinationPeer,
 			TableMappings:   input.TableMappings,
@@ -139,7 +139,7 @@ func SnapshotFlowWorkflow(ctx workflow.Context, input *SnapshotFlowInput) error 
 		logger.Info("creating indexes on destination")
 
 		createIdxCtx := workflow.WithActivityOptions(ctx, activityOpts)
-		err := workflow.ExecuteActivity(createIdxCtx, activities.CreateIndexes, &activities.CreateIndexesInput{
+		err := workflow.ExecuteActivity(createIdxCtx, activities.CreateIndexesActivity, &activities.CreateIndexesInput{
 			MirrorName:      input.MirrorName,
 			SourcePeer:      input.SourcePeer,
 			DestinationPeer: input.DestinationPeer,
@@ -157,7 +157,7 @@ func SnapshotFlowWorkflow(ctx workflow.Context, input *SnapshotFlowInput) error 
 		logger.Info("recreating foreign keys on destination")
 
 		createFKCtx := workflow.WithActivityOptions(ctx, activityOpts)
-		err := workflow.ExecuteActivity(createFKCtx, activities.RecreateForeignKeys, &activities.RecreateFKInput{
+		err := workflow.ExecuteActivity(createFKCtx, activities.RecreateForeignKeysActivity, &activities.RecreateFKInput{
 			MirrorName:      input.MirrorName,
 			SourcePeer:      input.SourcePeer,
 			DestinationPeer: input.DestinationPeer,
@@ -204,7 +204,7 @@ func CloneTableWorkflow(ctx workflow.Context, input *CloneTableInput) error {
 
 	// Get partition key and count
 	var partitions *activities.PartitionInfo
-	err := workflow.ExecuteActivity(ctx, activities.GetPartitionInfo, &activities.GetPartitionInfoInput{
+	err := workflow.ExecuteActivity(ctx, activities.GetPartitionInfoActivity, &activities.GetPartitionInfoInput{
 		MirrorName:          input.MirrorName,
 		SourcePeer:          input.SourcePeer,
 		TableMapping:        input.TableMapping,
@@ -219,7 +219,7 @@ func CloneTableWorkflow(ctx workflow.Context, input *CloneTableInput) error {
 	if partitions == nil || partitions.NumPartitions <= 1 {
 		logger.Info("copying table without partitioning", slog.String("table", tableName))
 
-		err := workflow.ExecuteActivity(ctx, activities.CopyTable, &activities.CopyTableInput{
+		err := workflow.ExecuteActivity(ctx, activities.CopyTableActivity, &activities.CopyTableInput{
 			MirrorName:      input.MirrorName,
 			SourcePeer:      input.SourcePeer,
 			DestinationPeer: input.DestinationPeer,
@@ -248,7 +248,7 @@ func CloneTableWorkflow(ctx workflow.Context, input *CloneTableInput) error {
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				err := workflow.ExecuteActivity(ctx, activities.CopyPartition, &activities.CopyPartitionInput{
+				err := workflow.ExecuteActivity(ctx, activities.CopyPartitionActivity, &activities.CopyPartitionInput{
 					MirrorName:      input.MirrorName,
 					SourcePeer:      input.SourcePeer,
 					DestinationPeer: input.DestinationPeer,

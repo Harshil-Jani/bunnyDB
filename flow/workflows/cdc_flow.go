@@ -158,7 +158,7 @@ func CDCFlowWorkflow(
 
 		// Run setup activity
 		var setupOutput *activities.SetupOutput
-		err := workflow.ExecuteActivity(setupCtx, activities.SetupMirror, &activities.SetupInput{
+		err := workflow.ExecuteActivity(setupCtx, activities.SetupMirrorActivity, &activities.SetupInput{
 			MirrorName:           input.MirrorName,
 			SourcePeer:           input.SourcePeer,
 			DestinationPeer:      input.DestinationPeer,
@@ -225,7 +225,7 @@ func CDCFlowWorkflow(
 	})
 
 	// Start sync activity
-	syncFuture := workflow.ExecuteActivity(syncCtx, activities.SyncFlow, &activities.SyncInput{
+	syncFuture := workflow.ExecuteActivity(syncCtx, activities.SyncFlowActivity, &activities.SyncInput{
 		MirrorName:      input.MirrorName,
 		SourcePeer:      input.SourcePeer,
 		DestinationPeer: input.DestinationPeer,
