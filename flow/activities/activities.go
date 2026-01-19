@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,6 +15,12 @@ import (
 	"github.com/bunnydb/bunnydb/flow/model"
 	"github.com/bunnydb/bunnydb/flow/shared"
 )
+
+// sanitizeName converts a name to a valid PostgreSQL identifier
+// by replacing hyphens and other special characters with underscores
+func sanitizeName(name string) string {
+	return strings.ReplaceAll(name, "-", "_")
+}
 
 // Activity name constants for use in workflows
 const (
@@ -154,12 +161,15 @@ func (a *Activities) SetupMirror(ctx context.Context, input *SetupInput) (*Setup
 		srcTableIDMapping[oid] = tableName
 	}
 
+	// Sanitize mirror name for use in PostgreSQL identifiers (no hyphens allowed)
+	safeName := sanitizeName(input.MirrorName)
+
 	a.WriteLog(ctx, input.MirrorName, "INFO", "Creating publication", map[string]interface{}{
 		"tables": tables,
 	})
 
 	// Create publication
-	publicationName := fmt.Sprintf("bunny_pub_%s", input.MirrorName)
+	publicationName := fmt.Sprintf("bunny_pub_%s", safeName)
 	if err := srcConn.CreatePublication(ctx, publicationName, tables); err != nil {
 		a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to create publication", map[string]interface{}{
 			"error":       err.Error(),
@@ -171,7 +181,7 @@ func (a *Activities) SetupMirror(ctx context.Context, input *SetupInput) (*Setup
 	a.WriteLog(ctx, input.MirrorName, "INFO", "Creating replication slot", nil)
 
 	// Create replication slot
-	slotName := fmt.Sprintf("bunny_slot_%s", input.MirrorName)
+	slotName := fmt.Sprintf("bunny_slot_%s", safeName)
 	snapshotName, err := srcConn.CreateReplicationSlot(ctx, slotName)
 	if err != nil {
 		a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to create replication slot", map[string]interface{}{
@@ -567,22 +577,34 @@ func (a *Activities) DropSourceReplication(ctx context.Context, input *DropSourc
 	logger := slog.Default().With(slog.String("mirror", input.MirrorName))
 	logger.Info("dropping source replication")
 
-	// Get mirror state from catalog
-	var sourcePeer, slotName, publicationName string
+	// Get mirror state and source peer from catalog
+	var sourcePeerName, slotName, publicationName string
 	err := a.CatalogPool.QueryRow(ctx, `
-		SELECT m.source_peer_id, ms.slot_name, ms.publication_name
+		SELECT p.name, ms.slot_name, ms.publication_name
 		FROM bunny_internal.mirrors m
 		JOIN bunny_internal.mirror_state ms ON m.name = ms.mirror_name
 		JOIN bunny_internal.peers p ON m.source_peer_id = p.id
 		WHERE m.name = $1
-	`, input.MirrorName).Scan(&sourcePeer, &slotName, &publicationName)
+	`, input.MirrorName).Scan(&sourcePeerName, &slotName, &publicationName)
 
 	if err != nil {
-		return fmt.Errorf("failed to get mirror state: %w", err)
+		logger.Warn("failed to get mirror state from mirrors table, trying fallback", slog.Any("error", err))
+		// Fallback: try to get slot/publication from mirror_state alone
+		err = a.CatalogPool.QueryRow(ctx, `
+			SELECT COALESCE(slot_name, ''), COALESCE(publication_name, '')
+			FROM bunny_internal.mirror_state
+			WHERE mirror_name = $1
+		`, input.MirrorName).Scan(&slotName, &publicationName)
+		if err != nil {
+			return fmt.Errorf("failed to get mirror state: %w", err)
+		}
+		// Without source peer, we can't drop - just log and continue
+		logger.Warn("no source peer found, skipping replication slot/publication cleanup")
+		return nil
 	}
 
 	// Get source config and connect
-	srcConfig, err := a.getPeerConfig(ctx, sourcePeer)
+	srcConfig, err := a.getPeerConfig(ctx, sourcePeerName)
 	if err != nil {
 		return fmt.Errorf("failed to get source config: %w", err)
 	}
@@ -597,6 +619,8 @@ func (a *Activities) DropSourceReplication(ctx context.Context, input *DropSourc
 	if slotName != "" {
 		if err := srcConn.DropReplicationSlot(ctx, slotName); err != nil {
 			logger.Warn("failed to drop slot", slog.Any("error", err))
+		} else {
+			logger.Info("dropped replication slot", slog.String("slot", slotName))
 		}
 	}
 
@@ -604,6 +628,8 @@ func (a *Activities) DropSourceReplication(ctx context.Context, input *DropSourc
 	if publicationName != "" {
 		if err := srcConn.DropPublication(ctx, publicationName); err != nil {
 			logger.Warn("failed to drop publication", slog.Any("error", err))
+		} else {
+			logger.Info("dropped publication", slog.String("publication", publicationName))
 		}
 	}
 
@@ -711,6 +737,21 @@ func (a *Activities) getPeerConfig(ctx context.Context, peerName string) (*postg
 	return config, nil
 }
 
+// getMirrorPeers gets the source and destination peer names for a mirror
+func (a *Activities) getMirrorPeers(ctx context.Context, mirrorName string) (sourcePeer, destPeer string, err error) {
+	err = a.CatalogPool.QueryRow(ctx, `
+		SELECT sp.name, dp.name
+		FROM bunny_internal.mirrors m
+		JOIN bunny_internal.peers sp ON m.source_peer_id = sp.id
+		JOIN bunny_internal.peers dp ON m.destination_peer_id = dp.id
+		WHERE m.name = $1
+	`, mirrorName).Scan(&sourcePeer, &destPeer)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get mirror peers: %w", err)
+	}
+	return sourcePeer, destPeer, nil
+}
+
 // Placeholder types for activities that need more implementation
 
 type TruncateTableInput struct {
@@ -778,35 +819,375 @@ type CopyPartitionInput struct {
 	MaxValue        interface{}
 }
 
-// Placeholder implementations
+// TruncateTable truncates a table on the destination
 func (a *Activities) TruncateTable(ctx context.Context, input *TruncateTableInput) error {
+	logger := slog.Default().With(
+		slog.String("mirror", input.MirrorName),
+		slog.String("table", input.TableName))
+	logger.Info("truncating table")
+
+	// Get destination peer config
+	dstConfig, err := a.getPeerConfig(ctx, input.DestinationPeer)
+	if err != nil {
+		return fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	// Connect to destination
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	// Truncate the table with CASCADE to handle FK dependencies
+	_, err = dstConn.Conn().Exec(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE", input.TableName))
+	if err != nil {
+		return fmt.Errorf("failed to truncate table %s: %w", input.TableName, err)
+	}
+
+	logger.Info("table truncated successfully")
 	return nil
 }
 
+// ExportSnapshot exports a snapshot for consistent reads
 func (a *Activities) ExportSnapshot(ctx context.Context, input *ExportSnapshotInput) (string, error) {
-	return "", nil
+	logger := slog.Default().With(slog.String("mirror", input.MirrorName))
+	logger.Info("exporting snapshot")
+
+	// Get source peer config
+	srcConfig, err := a.getPeerConfig(ctx, input.SourcePeer)
+	if err != nil {
+		return "", fmt.Errorf("failed to get source peer config: %w", err)
+	}
+
+	// Connect to source
+	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to connect to source: %w", err)
+	}
+	defer srcConn.Close()
+
+	// Start a transaction with REPEATABLE READ isolation and export snapshot
+	tx, err := srcConn.Conn().Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Set isolation level
+	_, err = tx.Exec(ctx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+	if err != nil {
+		return "", fmt.Errorf("failed to set isolation level: %w", err)
+	}
+
+	// Export snapshot
+	var snapshotName string
+	err = tx.QueryRow(ctx, "SELECT pg_export_snapshot()").Scan(&snapshotName)
+	if err != nil {
+		return "", fmt.Errorf("failed to export snapshot: %w", err)
+	}
+
+	logger.Info("snapshot exported", slog.String("snapshot", snapshotName))
+	return snapshotName, nil
 }
 
+// DropTableForeignKeys drops foreign keys that reference the given table
 func (a *Activities) DropTableForeignKeys(ctx context.Context, input *DropTableFKInput) error {
+	logger := slog.Default().With(
+		slog.String("mirror", input.MirrorName),
+		slog.String("table", input.TableName))
+	logger.Info("dropping foreign keys for table")
+
+	// Get destination peer config
+	dstConfig, err := a.getPeerConfig(ctx, input.DestinationPeer)
+	if err != nil {
+		return fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	// Connect to destination
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	// Find FKs referencing this table or owned by this table
+	rows, err := dstConn.Conn().Query(ctx, `
+		SELECT
+			tc.table_schema,
+			tc.table_name,
+			tc.constraint_name
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.constraint_column_usage ccu
+			ON tc.constraint_name = ccu.constraint_name
+			AND tc.constraint_schema = ccu.constraint_schema
+		WHERE tc.constraint_type = 'FOREIGN KEY'
+			AND (ccu.table_schema || '.' || ccu.table_name = $1
+				OR tc.table_schema || '.' || tc.table_name = $1)
+	`, input.TableName)
+	if err != nil {
+		return fmt.Errorf("failed to query foreign keys: %w", err)
+	}
+	defer rows.Close()
+
+	var fksToDrops []struct{ schema, table, constraint string }
+	for rows.Next() {
+		var fk struct{ schema, table, constraint string }
+		if err := rows.Scan(&fk.schema, &fk.table, &fk.constraint); err != nil {
+			continue
+		}
+		fksToDrops = append(fksToDrops, fk)
+	}
+
+	// Drop each FK
+	for _, fk := range fksToDrops {
+		query := fmt.Sprintf("ALTER TABLE %s.%s DROP CONSTRAINT IF EXISTS %s",
+			fk.schema, fk.table, fk.constraint)
+		_, err = dstConn.Conn().Exec(ctx, query)
+		if err != nil {
+			logger.Warn("failed to drop FK", slog.String("constraint", fk.constraint), slog.Any("error", err))
+		} else {
+			logger.Info("dropped FK", slog.String("constraint", fk.constraint))
+		}
+	}
+
 	return nil
 }
 
+// CreateTableIndexes creates indexes for a specific table on the destination
 func (a *Activities) CreateTableIndexes(ctx context.Context, input *CreateTableIndexesInput) error {
+	logger := slog.Default().With(
+		slog.String("mirror", input.MirrorName),
+		slog.String("table", input.TableMapping.FullSourceName()))
+	logger.Info("creating indexes for table")
+
+	// Get peer configs
+	srcConfig, err := a.getPeerConfig(ctx, input.SourcePeer)
+	if err != nil {
+		return fmt.Errorf("failed to get source peer config: %w", err)
+	}
+
+	dstConfig, err := a.getPeerConfig(ctx, input.DestinationPeer)
+	if err != nil {
+		return fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	// Connect
+	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to source: %w", err)
+	}
+	defer srcConn.Close()
+
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	// Replicate indexes for the table
+	if err := srcConn.ReplicateIndexes(ctx, dstConn,
+		input.TableMapping.DestinationSchema,
+		input.TableMapping.DestinationTable,
+		input.Concurrent); err != nil {
+		return fmt.Errorf("failed to replicate indexes: %w", err)
+	}
+
+	activity.RecordHeartbeat(ctx, fmt.Sprintf("created indexes for %s", input.TableMapping.FullDestinationName()))
 	return nil
 }
 
+// RecreateTableForeignKeys recreates foreign keys for a specific table
 func (a *Activities) RecreateTableForeignKeys(ctx context.Context, input *RecreateTableFKInput) error {
+	logger := slog.Default().With(
+		slog.String("mirror", input.MirrorName),
+		slog.String("table", input.TableName))
+	logger.Info("recreating foreign keys for table")
+
+	// Get peer configs
+	srcConfig, err := a.getPeerConfig(ctx, input.SourcePeer)
+	if err != nil {
+		return fmt.Errorf("failed to get source peer config: %w", err)
+	}
+
+	dstConfig, err := a.getPeerConfig(ctx, input.DestinationPeer)
+	if err != nil {
+		return fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	// Connect
+	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to source: %w", err)
+	}
+	defer srcConn.Close()
+
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	// Create FK replicator and replicate FKs for this table
+	fkReplicator := postgres.NewFKReplicator(srcConn, dstConn)
+	if err := fkReplicator.ReplicateFKsFromSource(ctx, []string{input.TableName}, input.MakeDeferrable); err != nil {
+		return fmt.Errorf("failed to replicate FKs: %w", err)
+	}
+
 	return nil
 }
 
+// DropDestinationTables drops all destination tables for a mirror
 func (a *Activities) DropDestinationTables(ctx context.Context, input *DropDestinationInput) error {
+	logger := slog.Default().With(slog.String("mirror", input.MirrorName))
+	logger.Info("dropping destination tables")
+
+	// Get destination peer from mirrors table
+	_, destPeer, err := a.getMirrorPeers(ctx, input.MirrorName)
+	if err != nil {
+		logger.Warn("failed to get destination peer", slog.Any("error", err))
+		return nil // Don't fail the whole operation
+	}
+
+	dstConfig, err := a.getPeerConfig(ctx, destPeer)
+	if err != nil {
+		return fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	// Get table mappings from catalog
+	rows, err := a.CatalogPool.Query(ctx, `
+		SELECT destination_schema, destination_table
+		FROM bunny_internal.table_mappings tm
+		JOIN bunny_internal.mirrors m ON tm.mirror_id = m.id
+		WHERE m.name = $1
+	`, input.MirrorName)
+	if err != nil {
+		logger.Warn("failed to get table mappings", slog.Any("error", err))
+		return nil
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var schema, table string
+		if err := rows.Scan(&schema, &table); err != nil {
+			continue
+		}
+		tableName := fmt.Sprintf("%s.%s", schema, table)
+		_, err = dstConn.Conn().Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE", tableName))
+		if err != nil {
+			logger.Warn("failed to drop table", slog.String("table", tableName), slog.Any("error", err))
+		} else {
+			logger.Info("dropped table", slog.String("table", tableName))
+		}
+	}
+
 	return nil
 }
 
+// GetPartitionInfo gets partition information for a table
 func (a *Activities) GetPartitionInfo(ctx context.Context, input *GetPartitionInfoInput) (*PartitionInfo, error) {
-	return nil, nil
+	logger := slog.Default().With(
+		slog.String("mirror", input.MirrorName),
+		slog.String("table", input.TableMapping.FullSourceName()))
+	logger.Info("getting partition info")
+
+	srcConfig, err := a.getPeerConfig(ctx, input.SourcePeer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get source peer config: %w", err)
+	}
+
+	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to source: %w", err)
+	}
+	defer srcConn.Close()
+
+	// Get row count for the table
+	var rowCount int64
+	tableName := input.TableMapping.FullSourceName()
+	err = srcConn.Conn().QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&rowCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count rows: %w", err)
+	}
+
+	// Calculate number of partitions based on rows per partition
+	numPartitions := uint32(1)
+	if input.NumRowsPerPartition > 0 && rowCount > int64(input.NumRowsPerPartition) {
+		numPartitions = uint32((rowCount + int64(input.NumRowsPerPartition) - 1) / int64(input.NumRowsPerPartition))
+	}
+
+	return &PartitionInfo{
+		PartitionKey:  input.TableMapping.PartitionKey,
+		NumPartitions: numPartitions,
+	}, nil
 }
 
+// CopyPartition copies a partition of a table
 func (a *Activities) CopyPartition(ctx context.Context, input *CopyPartitionInput) error {
+	logger := slog.Default().With(
+		slog.String("mirror", input.MirrorName),
+		slog.String("table", input.TableMapping.FullSourceName()),
+		slog.Uint64("partition", uint64(input.PartitionNum)))
+	logger.Info("copying partition")
+
+	// Get peer configs
+	srcConfig, err := a.getPeerConfig(ctx, input.SourcePeer)
+	if err != nil {
+		return fmt.Errorf("failed to get source peer config: %w", err)
+	}
+
+	dstConfig, err := a.getPeerConfig(ctx, input.DestinationPeer)
+	if err != nil {
+		return fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	// Connect
+	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to source: %w", err)
+	}
+	defer srcConn.Close()
+
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	// If we have a snapshot name, set it
+	if input.SnapshotName != "" {
+		_, err = srcConn.Conn().Exec(ctx, fmt.Sprintf("SET TRANSACTION SNAPSHOT '%s'", input.SnapshotName))
+		if err != nil {
+			logger.Warn("failed to set snapshot", slog.Any("error", err))
+		}
+	}
+
+	// Copy data - for now do a full copy if no partition key
+	// In a real implementation, this would use OFFSET/LIMIT or partition key ranges
+	srcTable := input.TableMapping.FullSourceName()
+	dstTable := input.TableMapping.FullDestinationName()
+
+	query := fmt.Sprintf("SELECT * FROM %s", srcTable)
+	if input.PartitionKey != "" && input.TotalPartitions > 1 {
+		// Use modulo-based partitioning
+		query = fmt.Sprintf("SELECT * FROM %s WHERE MOD(HASHTEXT(%s::text), %d) = %d",
+			srcTable, input.PartitionKey, input.TotalPartitions, input.PartitionNum)
+	}
+
+	// Execute copy - using INSERT ... SELECT for simplicity
+	// A real implementation would use COPY TO/FROM for better performance
+	copyQuery := fmt.Sprintf("INSERT INTO %s %s", dstTable, query)
+	_, err = dstConn.Conn().Exec(ctx, copyQuery)
+	if err != nil {
+		return fmt.Errorf("failed to copy data: %w", err)
+	}
+
+	activity.RecordHeartbeat(ctx, fmt.Sprintf("copied partition %d/%d", input.PartitionNum+1, input.TotalPartitions))
 	return nil
 }

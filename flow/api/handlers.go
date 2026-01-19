@@ -166,8 +166,49 @@ func (h *Handler) CreateMirror(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Get peer IDs for storing in mirrors table
+	var sourcePeerID, destPeerID int
+	err := h.CatalogPool.QueryRow(ctx, `SELECT id FROM bunny_internal.peers WHERE name = $1`, req.SourcePeer).Scan(&sourcePeerID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("source peer not found: %s", req.SourcePeer))
+		return
+	}
+	err = h.CatalogPool.QueryRow(ctx, `SELECT id FROM bunny_internal.peers WHERE name = $1`, req.DestinationPeer).Scan(&destPeerID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("destination peer not found: %s", req.DestinationPeer))
+		return
+	}
+
+	// Store mirror config in mirrors table
+	configJSON, _ := json.Marshal(map[string]interface{}{
+		"do_initial_snapshot":             req.DoInitialSnapshot,
+		"max_batch_size":                  req.MaxBatchSize,
+		"idle_timeout_seconds":            req.IdleTimeoutSeconds,
+		"snapshot_num_rows_per_partition": req.SnapshotNumRowsPerPartition,
+		"snapshot_max_parallel_workers":   req.SnapshotMaxParallelWorkers,
+		"snapshot_num_tables_in_parallel": req.SnapshotNumTablesInParallel,
+		"replicate_indexes":               req.ReplicateIndexes,
+		"replicate_foreign_keys":          req.ReplicateForeignKeys,
+	})
+
+	_, err = h.CatalogPool.Exec(ctx, `
+		INSERT INTO bunny_internal.mirrors (name, source_peer_id, destination_peer_id, config, status)
+		VALUES ($1, $2, $3, $4, 'CREATED')
+		ON CONFLICT (name) DO UPDATE SET
+			source_peer_id = $2,
+			destination_peer_id = $3,
+			config = $4,
+			status = 'CREATED',
+			updated_at = NOW()
+	`, req.Name, sourcePeerID, destPeerID, configJSON)
+	if err != nil {
+		slog.Error("failed to create mirror", slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, "failed to create mirror")
+		return
+	}
+
 	// Insert mirror into mirror_state immediately so it shows up in the list
-	_, err := h.CatalogPool.Exec(ctx, `
+	_, err = h.CatalogPool.Exec(ctx, `
 		INSERT INTO bunny_internal.mirror_state (mirror_name, status)
 		VALUES ($1, 'CREATED')
 		ON CONFLICT (mirror_name) DO UPDATE SET

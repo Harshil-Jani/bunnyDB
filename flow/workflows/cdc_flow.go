@@ -216,12 +216,15 @@ func CDCFlowWorkflow(
 	// Main CDC loop
 	logger.Info("starting CDC sync loop", slog.String("mirror", input.MirrorName))
 
-	syncCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+	// Create a cancellable context for the sync activity so we can cancel it on signals
+	syncCtx, cancelSync := workflow.WithCancel(ctx)
+	syncCtx = workflow.WithActivityOptions(syncCtx, workflow.ActivityOptions{
 		StartToCloseTimeout: 365 * 24 * time.Hour, // Long-running
 		HeartbeatTimeout:    1 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 1, // Handle retries in the activity
 		},
+		WaitForCancellation: true, // Wait for activity to acknowledge cancellation
 	})
 
 	// Start sync activity
@@ -236,6 +239,7 @@ func CDCFlowWorkflow(
 		IdleTimeout:     state.SyncFlowOptions.IdleTimeoutSeconds,
 		TableMappings:   state.SyncFlowOptions.TableMappings,
 	})
+	_ = cancelSync // Will be used in signal handlers
 
 	var finished bool
 	var syncErr error
@@ -251,8 +255,15 @@ func CDCFlowWorkflow(
 		var syncOutput *activities.SyncOutput
 		syncErr = f.Get(ctx, &syncOutput)
 		if syncErr != nil {
-			logger.Error("sync error", slog.Any("error", syncErr))
-			state.RecordError(syncErr.Error())
+			// Only record error if it's not a cancellation (signal-triggered)
+			if !temporal.IsCanceledError(syncErr) && state.ActiveSignal == model.NoopSignal {
+				logger.Error("sync error", slog.Any("error", syncErr))
+				state.RecordError(syncErr.Error())
+			} else {
+				// Cancelled due to signal - not an error
+				syncErr = nil
+				logger.Info("sync cancelled due to signal")
+			}
 		} else if syncOutput != nil {
 			state.LastLSN = syncOutput.LastLSN
 			state.LastSyncBatchID = syncOutput.BatchID
@@ -266,6 +277,7 @@ func CDCFlowWorkflow(
 		c.Receive(ctx, &payload)
 		state.ActiveSignal = model.PauseSignal
 		state.UpdateStatus(model.MirrorStatusPausing)
+		cancelSync() // Cancel the running sync activity
 		finished = true
 		logger.Info("received pause signal")
 	})
@@ -274,6 +286,7 @@ func CDCFlowWorkflow(
 		var payload model.SignalPayload
 		c.Receive(ctx, &payload)
 		state.ActiveSignal = model.TerminateSignal
+		cancelSync() // Cancel the running sync activity
 		finished = true
 		logger.Info("received terminate signal")
 	})
@@ -283,6 +296,7 @@ func CDCFlowWorkflow(
 		c.Receive(ctx, &payload)
 		state.ActiveSignal = model.ResyncSignal
 		state.IsResync = true
+		cancelSync() // Cancel the running sync activity
 		finished = true
 		logger.Info("received resync signal")
 	})
@@ -292,6 +306,7 @@ func CDCFlowWorkflow(
 		c.Receive(ctx, &payload)
 		state.ActiveSignal = model.ResyncTableSignal
 		state.ResyncTableName = payload.TableName
+		cancelSync() // Cancel the running sync activity
 		finished = true
 		logger.Info("received table resync signal", slog.String("table", payload.TableName))
 	})
@@ -300,7 +315,8 @@ func CDCFlowWorkflow(
 		var payload model.SignalPayload
 		c.Receive(ctx, &payload)
 		state.ActiveSignal = model.RetryNowSignal
-		state.ErrorCount = 0 // Reset error count for immediate retry
+		state.ClearError() // Reset error count AND error message for immediate retry
+		cancelSync()       // Cancel the running sync activity
 		finished = true
 		logger.Info("received retry-now signal")
 	})
@@ -309,6 +325,7 @@ func CDCFlowWorkflow(
 		var payload model.SignalPayload
 		c.Receive(ctx, &payload)
 		state.ActiveSignal = model.SyncSchemaSignal
+		cancelSync() // Cancel the running sync activity
 		finished = true
 		logger.Info("received sync-schema signal")
 	})
