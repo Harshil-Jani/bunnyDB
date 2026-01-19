@@ -141,7 +141,7 @@ func (c *PostgresConnector) getPrimaryKeyColumns(ctx context.Context, schemaName
 func (c *PostgresConnector) isReplicaIdentityFull(ctx context.Context, schemaName, tableName string) (bool, error) {
 	var relreplident string
 	err := c.conn.QueryRow(ctx, `
-		SELECT c.relreplident
+		SELECT c.relreplident::text
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE n.nspname = $1 AND c.relname = $2
@@ -323,4 +323,56 @@ func (c *PostgresConnector) ApplySchemaDelta(ctx context.Context, delta *SchemaD
 
 func quoteIdentifier(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+// CreateTableFromSchema creates a table in the destination database based on source schema
+func (c *PostgresConnector) CreateTableFromSchema(ctx context.Context, schema *TableSchema, destSchema, destTable string) error {
+	// Build column definitions
+	var columnDefs []string
+	for _, col := range schema.Columns {
+		colDef := fmt.Sprintf("%s %s", quoteIdentifier(col.Name), col.Type)
+
+		if !col.Nullable {
+			colDef += " NOT NULL"
+		}
+		if col.DefaultValue != nil && !strings.Contains(*col.DefaultValue, "nextval(") {
+			// Skip auto-increment defaults, they need the sequence
+			colDef += " DEFAULT " + *col.DefaultValue
+		}
+
+		columnDefs = append(columnDefs, colDef)
+	}
+
+	// Add primary key constraint if present
+	if len(schema.PrimaryKeyColumns) > 0 {
+		pkCols := make([]string, len(schema.PrimaryKeyColumns))
+		for i, col := range schema.PrimaryKeyColumns {
+			pkCols[i] = quoteIdentifier(col)
+		}
+		columnDefs = append(columnDefs, fmt.Sprintf("PRIMARY KEY (%s)", strings.Join(pkCols, ", ")))
+	}
+
+	// Build CREATE TABLE statement
+	query := fmt.Sprintf(
+		"CREATE TABLE IF NOT EXISTS %s.%s (\n  %s\n)",
+		quoteIdentifier(destSchema),
+		quoteIdentifier(destTable),
+		strings.Join(columnDefs, ",\n  "),
+	)
+
+	c.logger.Info("creating table", "schema", destSchema, "table", destTable)
+
+	if _, err := c.conn.Exec(ctx, query); err != nil {
+		return fmt.Errorf("failed to create table %s.%s: %w", destSchema, destTable, err)
+	}
+
+	c.logger.Info("table created successfully", "schema", destSchema, "table", destTable)
+	return nil
+}
+
+// EnsureSchemaExists creates the schema if it doesn't exist
+func (c *PostgresConnector) EnsureSchemaExists(ctx context.Context, schemaName string) error {
+	query := fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", quoteIdentifier(schemaName))
+	_, err := c.conn.Exec(ctx, query)
+	return err
 }

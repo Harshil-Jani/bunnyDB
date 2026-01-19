@@ -510,6 +510,21 @@ func (a *Activities) CopyTable(ctx context.Context, input *CopyTableInput) error
 	}
 	defer dstConn.Close()
 
+	// Ensure destination schema exists
+	if err := dstConn.EnsureSchemaExists(ctx, input.TableMapping.DestinationSchema); err != nil {
+		return fmt.Errorf("failed to create destination schema: %w", err)
+	}
+
+	// Get source table schema and create destination table if needed
+	srcSchema, err := srcConn.GetTableSchema(ctx, input.TableMapping.SourceSchema, input.TableMapping.SourceTable)
+	if err != nil {
+		return fmt.Errorf("failed to get source table schema: %w", err)
+	}
+
+	if err := dstConn.CreateTableFromSchema(ctx, srcSchema, input.TableMapping.DestinationSchema, input.TableMapping.DestinationTable); err != nil {
+		return fmt.Errorf("failed to create destination table: %w", err)
+	}
+
 	// Start a REPEATABLE READ transaction on source for snapshot consistency
 	// This is REQUIRED before SET TRANSACTION SNAPSHOT can be used
 	srcTx, err := srcConn.Conn().Begin(ctx)
@@ -1238,6 +1253,22 @@ func (a *Activities) CopyPartition(ctx context.Context, input *CopyPartitionInpu
 		return fmt.Errorf("failed to connect to destination: %w", err)
 	}
 	defer dstConn.Close()
+
+	// For first partition, ensure schema and table exist
+	if input.PartitionNum == 0 {
+		if err := dstConn.EnsureSchemaExists(ctx, input.TableMapping.DestinationSchema); err != nil {
+			return fmt.Errorf("failed to create destination schema: %w", err)
+		}
+
+		srcSchema, err := srcConn.GetTableSchema(ctx, input.TableMapping.SourceSchema, input.TableMapping.SourceTable)
+		if err != nil {
+			return fmt.Errorf("failed to get source table schema: %w", err)
+		}
+
+		if err := dstConn.CreateTableFromSchema(ctx, srcSchema, input.TableMapping.DestinationSchema, input.TableMapping.DestinationTable); err != nil {
+			return fmt.Errorf("failed to create destination table: %w", err)
+		}
+	}
 
 	// Start a REPEATABLE READ transaction on source for snapshot consistency
 	// This is REQUIRED before SET TRANSACTION SNAPSHOT can be used
