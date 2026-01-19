@@ -332,6 +332,20 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 		slog.Int("batchSize", batchSize),
 		slog.Duration("idleTimeout", idleTimeout))
 
+	// Update status to RUNNING immediately when CDC starts
+	_, err = a.CatalogPool.Exec(ctx, `
+		UPDATE bunny_internal.mirror_state
+		SET status = 'RUNNING',
+		    updated_at = NOW()
+		WHERE mirror_name = $1
+	`, input.MirrorName)
+	if err != nil {
+		logger.Warn("failed to update mirror status to RUNNING", slog.Any("error", err))
+	}
+
+	// Send initial heartbeat immediately
+	activity.RecordHeartbeat(ctx, fmt.Sprintf("starting CDC sync: LSN=%d", lastLSN))
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -342,26 +356,33 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 		default:
 		}
 
-		// Send heartbeat every 30 seconds
-		if time.Since(lastHeartbeat) > 30*time.Second {
+		// Send heartbeat every 10 seconds (more frequent to avoid timeout)
+		if time.Since(lastHeartbeat) > 10*time.Second {
 			activity.RecordHeartbeat(ctx, fmt.Sprintf("syncing: LSN=%d, records=%d", lastLSN, recordsProcessed))
 			lastHeartbeat = time.Now()
 		}
 
-		// Pull records from replication stream
-		records, newLSN, err := cdcReader.PullRecords(ctx, batchSize, 5*time.Second)
+		// Pull records from replication stream (with short timeout to allow heartbeats)
+		records, newLSN, err := cdcReader.PullRecords(ctx, batchSize, 3*time.Second)
 		if err != nil {
 			if ctx.Err() != nil {
 				return &SyncOutput{LastLSN: lastLSN, BatchID: batchID}, ctx.Err()
 			}
 			logger.Error("failed to pull records", slog.Any("error", err))
+			// Send heartbeat on error to stay alive
+			activity.RecordHeartbeat(ctx, fmt.Sprintf("error pulling records, retrying: %v", err))
+			lastHeartbeat = time.Now()
 			// Sleep briefly before retrying
 			time.Sleep(1 * time.Second)
 			continue
 		}
 
 		if len(records) == 0 {
-			// No records, continue polling
+			// No records - still send heartbeat to stay alive
+			if time.Since(lastHeartbeat) > 5*time.Second {
+				activity.RecordHeartbeat(ctx, fmt.Sprintf("waiting for changes: LSN=%d", lastLSN))
+				lastHeartbeat = time.Now()
+			}
 			continue
 		}
 
