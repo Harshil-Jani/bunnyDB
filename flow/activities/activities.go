@@ -611,19 +611,15 @@ func (a *Activities) CleanupCatalog(ctx context.Context, input *CleanupCatalogIn
 
 func (a *Activities) getPeerConfig(ctx context.Context, peerName string) (*postgres.PostgresConfig, error) {
 	var config postgres.PostgresConfig
-	var configJSON []byte
 
 	err := a.CatalogPool.QueryRow(ctx, `
-		SELECT config FROM bunny_internal.peers WHERE name = $1
-	`, peerName).Scan(&configJSON)
+		SELECT host, port, username, password, database, ssl_mode
+		FROM bunny_internal.peers WHERE name = $1
+	`, peerName).Scan(&config.Host, &config.Port, &config.User, &config.Password, &config.Database, &config.SSLMode)
 
 	if err != nil {
-		return nil, fmt.Errorf("peer not found: %s", peerName)
+		return nil, fmt.Errorf("peer not found: %s: %w", peerName, err)
 	}
-
-	// Parse JSON config
-	// In real implementation: use json.Unmarshal
-	// For now, assume config is stored with direct fields
 
 	return &config, nil
 }

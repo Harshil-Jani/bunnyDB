@@ -33,10 +33,11 @@ type PostgresConnector struct {
 // PostgresConfig holds the configuration for a PostgreSQL connection
 type PostgresConfig struct {
 	Host           string
-	Port           uint32
+	Port           int
 	User           string
 	Password       string
 	Database       string
+	SSLMode        string
 	MetadataSchema string
 	RequireTLS     bool
 	RootCA         []byte
@@ -55,14 +56,20 @@ type ReplState struct {
 func NewPostgresConnector(ctx context.Context, config *PostgresConfig) (*PostgresConnector, error) {
 	logger := slog.Default().With(slog.String("component", "postgres-connector"))
 
-	connString := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s",
-		config.Host, config.Port, config.User, config.Password, config.Database,
-	)
-
-	if !config.RequireTLS {
-		connString += " sslmode=disable"
+	// Determine SSL mode
+	sslMode := config.SSLMode
+	if sslMode == "" {
+		if config.RequireTLS {
+			sslMode = "require"
+		} else {
+			sslMode = "disable"
+		}
 	}
+
+	connString := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		config.Host, config.Port, config.User, config.Password, config.Database, sslMode,
+	)
 
 	connConfig, err := pgx.ParseConfig(connString)
 	if err != nil {
@@ -129,14 +136,20 @@ func (c *PostgresConnector) ConnectionActive(ctx context.Context) error {
 
 // SetupReplConn creates a replication connection
 func (c *PostgresConnector) SetupReplConn(ctx context.Context) error {
-	connString := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s replication=database",
-		c.config.Host, c.config.Port, c.config.User, c.config.Password, c.config.Database,
-	)
-
-	if !c.config.RequireTLS {
-		connString += " sslmode=disable"
+	// Determine SSL mode
+	sslMode := c.config.SSLMode
+	if sslMode == "" {
+		if c.config.RequireTLS {
+			sslMode = "require"
+		} else {
+			sslMode = "disable"
+		}
 	}
+
+	connString := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s replication=database sslmode=%s",
+		c.config.Host, c.config.Port, c.config.User, c.config.Password, c.config.Database, sslMode,
+	)
 
 	connConfig, err := pgx.ParseConfig(connString)
 	if err != nil {

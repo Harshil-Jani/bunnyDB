@@ -166,6 +166,20 @@ func (h *Handler) CreateMirror(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Insert mirror into mirror_state immediately so it shows up in the list
+	_, err := h.CatalogPool.Exec(ctx, `
+		INSERT INTO bunny_internal.mirror_state (mirror_name, status)
+		VALUES ($1, 'CREATED')
+		ON CONFLICT (mirror_name) DO UPDATE SET
+			status = 'CREATED',
+			updated_at = NOW()
+	`, req.Name)
+	if err != nil {
+		slog.Error("failed to create mirror state", slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, "failed to create mirror")
+		return
+	}
+
 	// Start the CDC workflow
 	workflowID := fmt.Sprintf("cdc-%s", req.Name)
 	workflowOptions := client.StartWorkflowOptions{
@@ -191,6 +205,11 @@ func (h *Handler) CreateMirror(w http.ResponseWriter, r *http.Request) {
 	we, err := h.TemporalClient.ExecuteWorkflow(ctx, workflowOptions, workflows.CDCFlowWorkflow, input, nil)
 	if err != nil {
 		slog.Error("failed to start workflow", slog.Any("error", err))
+		// Update status to FAILED if workflow start fails
+		h.CatalogPool.Exec(ctx, `
+			UPDATE bunny_internal.mirror_state SET status = 'FAILED', error_message = $2, updated_at = NOW()
+			WHERE mirror_name = $1
+		`, req.Name, err.Error())
 		writeError(w, http.StatusInternalServerError, "failed to create mirror")
 		return
 	}
@@ -466,21 +485,31 @@ func (h *Handler) ListMirrors(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := h.CatalogPool.Query(ctx, `
-		SELECT mirror_name, status, slot_name, publication_name, last_lsn, error_message
+		SELECT mirror_name, status,
+			COALESCE(slot_name, ''),
+			COALESCE(publication_name, ''),
+			COALESCE(last_lsn, 0),
+			error_message,
+			COALESCE(error_count, 0)
 		FROM bunny_internal.mirror_state
 		ORDER BY mirror_name
 	`)
 	if err != nil {
+		slog.Error("failed to list mirrors", slog.Any("error", err))
 		writeError(w, http.StatusInternalServerError, "failed to list mirrors")
 		return
 	}
 	defer rows.Close()
 
-	var mirrors []MirrorStatusResponse
+	mirrors := []MirrorStatusResponse{}
 	for rows.Next() {
 		var m MirrorStatusResponse
 		var errMsg *string
-		rows.Scan(&m.Name, &m.Status, &m.SlotName, &m.PublicationName, &m.LastLSN, &errMsg)
+		err := rows.Scan(&m.Name, &m.Status, &m.SlotName, &m.PublicationName, &m.LastLSN, &errMsg, &m.ErrorCount)
+		if err != nil {
+			slog.Error("failed to scan mirror row", slog.Any("error", err))
+			continue
+		}
 		if errMsg != nil {
 			m.ErrorMessage = *errMsg
 		}
