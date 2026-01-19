@@ -317,17 +317,21 @@ func (h *Handler) GetMirrorStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try to get live state from workflow (may not be available if workflow is still starting)
+	// Note: We only override status from Temporal, not LSN/BatchID which are updated by the activity directly in the database
 	workflowID := fmt.Sprintf("cdc-%s", mirrorName)
 	resp, err := h.TemporalClient.QueryWorkflow(ctx, workflowID, "", workflows.QueryFlowState)
 	if err == nil {
 		var state model.CDCFlowState
 		if err := resp.Get(&state); err == nil {
-			// Update with live workflow state
+			// Only override status and error info from Temporal
+			// Keep LSN and BatchID from database (activity updates them directly)
 			response.Status = string(state.Status)
-			response.SlotName = state.SlotName
-			response.PublicationName = state.PublicationName
-			response.LastLSN = state.LastLSN
-			response.LastSyncBatchID = state.LastSyncBatchID
+			if state.SlotName != "" {
+				response.SlotName = state.SlotName
+			}
+			if state.PublicationName != "" {
+				response.PublicationName = state.PublicationName
+			}
 			response.ErrorMessage = state.ErrorMessage
 			response.ErrorCount = state.ErrorCount
 		}
@@ -812,18 +816,22 @@ func (h *Handler) ListMirrors(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Query Temporal to get live status for each mirror
+	// Note: We only override status from Temporal, not LSN/BatchID which are updated by the activity directly in the database
 	for i := range mirrors {
 		workflowID := fmt.Sprintf("cdc-%s", mirrors[i].Name)
 		resp, err := h.TemporalClient.QueryWorkflow(ctx, workflowID, "", workflows.QueryFlowState)
 		if err == nil {
 			var state model.CDCFlowState
 			if err := resp.Get(&state); err == nil {
-				// Update with live workflow state
+				// Only override status and error info from Temporal
+				// Keep LSN and BatchID from database (activity updates them directly)
 				mirrors[i].Status = string(state.Status)
-				mirrors[i].SlotName = state.SlotName
-				mirrors[i].PublicationName = state.PublicationName
-				mirrors[i].LastLSN = state.LastLSN
-				mirrors[i].LastSyncBatchID = state.LastSyncBatchID
+				if state.SlotName != "" {
+					mirrors[i].SlotName = state.SlotName
+				}
+				if state.PublicationName != "" {
+					mirrors[i].PublicationName = state.PublicationName
+				}
 				mirrors[i].ErrorMessage = state.ErrorMessage
 				mirrors[i].ErrorCount = state.ErrorCount
 			}
