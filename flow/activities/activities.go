@@ -611,15 +611,33 @@ func (a *Activities) CleanupCatalog(ctx context.Context, input *CleanupCatalogIn
 
 func (a *Activities) getPeerConfig(ctx context.Context, peerName string) (*postgres.PostgresConfig, error) {
 	var config postgres.PostgresConfig
+	var password, sslMode *string
 
 	err := a.CatalogPool.QueryRow(ctx, `
-		SELECT host, port, username, password, database, ssl_mode
+		SELECT host, port, username, password, database, COALESCE(ssl_mode, 'disable')
 		FROM bunny_internal.peers WHERE name = $1
-	`, peerName).Scan(&config.Host, &config.Port, &config.User, &config.Password, &config.Database, &config.SSLMode)
+	`, peerName).Scan(&config.Host, &config.Port, &config.User, &password, &config.Database, &sslMode)
 
 	if err != nil {
 		return nil, fmt.Errorf("peer not found: %s: %w", peerName, err)
 	}
+
+	if password != nil {
+		config.Password = *password
+	}
+	if sslMode != nil {
+		config.SSLMode = *sslMode
+	} else {
+		config.SSLMode = "disable"
+	}
+
+	slog.Info("loaded peer config",
+		slog.String("peer", peerName),
+		slog.String("host", config.Host),
+		slog.Int("port", config.Port),
+		slog.String("user", config.User),
+		slog.String("database", config.Database),
+		slog.String("sslMode", config.SSLMode))
 
 	return &config, nil
 }

@@ -1,0 +1,479 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import {
+  ArrowLeft,
+  Play,
+  Pause,
+  RefreshCw,
+  RotateCcw,
+  Trash2,
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  Database,
+  Table,
+  Activity,
+  Settings,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
+
+interface TableStatus {
+  table_name: string;
+  status: string;
+  rows_synced: number;
+  last_synced_at?: string;
+  error_message?: string;
+}
+
+interface MirrorDetails {
+  name: string;
+  status: string;
+  slot_name: string;
+  publication_name: string;
+  last_lsn: number;
+  last_sync_batch_id: number;
+  error_message?: string;
+  error_count: number;
+  tables?: TableStatus[];
+}
+
+const API_URL = process.env.BUNNY_API_URL || 'http://localhost:8112';
+
+export default function MirrorDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const mirrorName = params.name as string;
+
+  const [mirror, setMirror] = useState<MirrorDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const fetchMirrorDetails = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          setError('Mirror not found');
+          return;
+        }
+        throw new Error('Failed to fetch mirror details');
+      }
+      const data = await res.json();
+      setMirror(data);
+      setError(null);
+    } catch (err) {
+      setError('Failed to connect to BunnyDB API');
+    } finally {
+      setLoading(false);
+    }
+  }, [mirrorName]);
+
+  const performAction = async (action: string, tableName?: string) => {
+    const actionKey = tableName ? `${action}-${tableName}` : action;
+    setActionLoading(actionKey);
+    try {
+      const url = tableName
+        ? `${API_URL}/v1/mirrors/${mirrorName}/${action}/${tableName}`
+        : `${API_URL}/v1/mirrors/${mirrorName}/${action}`;
+      const res = await fetch(url, { method: 'POST' });
+      if (!res.ok) throw new Error(`Failed to ${action}`);
+      await fetchMirrorDetails();
+    } catch (err) {
+      console.error(`Failed to ${action}:`, err);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const deleteMirror = async () => {
+    setActionLoading('delete');
+    try {
+      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error('Failed to delete mirror');
+      router.push('/');
+    } catch (err) {
+      console.error('Failed to delete:', err);
+      setActionLoading(null);
+    }
+  };
+
+  useEffect(() => {
+    fetchMirrorDetails();
+    const interval = setInterval(fetchMirrorDetails, 5000);
+    return () => clearInterval(interval);
+  }, [fetchMirrorDetails]);
+
+  const toggleTableExpanded = (tableName: string) => {
+    setExpandedTables((prev) => {
+      const next = new Set(prev);
+      if (next.has(tableName)) {
+        next.delete(tableName);
+      } else {
+        next.add(tableName);
+      }
+      return next;
+    });
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status?.toUpperCase()) {
+      case 'RUNNING':
+      case 'SYNCED':
+        return 'bg-green-100 text-green-800 border-green-200';
+      case 'PAUSED':
+        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      case 'FAILED':
+      case 'ERROR':
+        return 'bg-red-100 text-red-800 border-red-200';
+      case 'SNAPSHOT':
+      case 'RESYNCING':
+      case 'SYNCING':
+      case 'SETTING_UP':
+        return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'PENDING':
+        return 'bg-gray-100 text-gray-800 border-gray-200';
+      default:
+        return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status?.toUpperCase()) {
+      case 'RUNNING':
+      case 'SYNCED':
+        return <CheckCircle className="w-5 h-5 text-green-500" />;
+      case 'PAUSED':
+        return <Pause className="w-5 h-5 text-yellow-500" />;
+      case 'FAILED':
+      case 'ERROR':
+        return <AlertCircle className="w-5 h-5 text-red-500" />;
+      case 'SNAPSHOT':
+      case 'RESYNCING':
+      case 'SYNCING':
+      case 'SETTING_UP':
+        return <RefreshCw className="w-5 h-5 text-blue-500 animate-spin" />;
+      default:
+        return <Clock className="w-5 h-5 text-gray-500" />;
+    }
+  };
+
+  const formatNumber = (num: number) => {
+    return new Intl.NumberFormat().format(num);
+  };
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return 'Never';
+    return new Date(dateStr).toLocaleString();
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
+      </div>
+    );
+  }
+
+  if (error || !mirror) {
+    return (
+      <div className="space-y-6">
+        <button
+          onClick={() => router.push('/')}
+          className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Mirrors
+        </button>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+          <AlertCircle className="w-12 h-12 mx-auto text-red-500 mb-4" />
+          <h2 className="text-lg font-semibold text-red-700">{error || 'Mirror not found'}</h2>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => router.push('/')}
+            className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <div className="flex items-center gap-3">
+            {getStatusIcon(mirror.status)}
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">{mirror.name}</h1>
+              <p className="text-sm text-gray-500">
+                Slot: {mirror.slot_name || 'N/A'} | Publication: {mirror.publication_name || 'N/A'}
+              </p>
+            </div>
+          </div>
+        </div>
+        <span className={`px-4 py-2 rounded-full text-sm font-medium border ${getStatusColor(mirror.status)}`}>
+          {mirror.status}
+        </span>
+      </div>
+
+      {/* Error Message */}
+      {mirror.error_message && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5" />
+            <div>
+              <h3 className="font-medium text-red-800">Error</h3>
+              <p className="text-sm text-red-700 mt-1">{mirror.error_message}</p>
+              <p className="text-xs text-red-500 mt-2">Error count: {mirror.error_count}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="bg-white rounded-lg shadow p-4">
+        <h2 className="text-sm font-medium text-gray-500 mb-3">Actions</h2>
+        <div className="flex flex-wrap gap-2">
+          {mirror.status === 'RUNNING' && (
+            <button
+              onClick={() => performAction('pause')}
+              disabled={actionLoading === 'pause'}
+              className="flex items-center gap-2 px-4 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 disabled:opacity-50"
+            >
+              {actionLoading === 'pause' ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Pause className="w-4 h-4" />
+              )}
+              Pause Mirror
+            </button>
+          )}
+          {mirror.status === 'PAUSED' && (
+            <button
+              onClick={() => performAction('resume')}
+              disabled={actionLoading === 'resume'}
+              className="flex items-center gap-2 px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 disabled:opacity-50"
+            >
+              {actionLoading === 'resume' ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4" />
+              )}
+              Resume Mirror
+            </button>
+          )}
+          <button
+            onClick={() => performAction('retry')}
+            disabled={actionLoading === 'retry'}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 disabled:opacity-50"
+          >
+            {actionLoading === 'retry' ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <RotateCcw className="w-4 h-4" />
+            )}
+            Retry Now
+          </button>
+          <button
+            onClick={() => performAction('resync')}
+            disabled={actionLoading === 'resync'}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 disabled:opacity-50"
+          >
+            {actionLoading === 'resync' ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            Full Resync
+          </button>
+          <button
+            onClick={() => performAction('sync-schema')}
+            disabled={actionLoading === 'sync-schema'}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 disabled:opacity-50"
+          >
+            {actionLoading === 'sync-schema' ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <Settings className="w-4 h-4" />
+            )}
+            Sync Schema
+          </button>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 ml-auto"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete Mirror
+          </button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <Activity className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Last LSN</p>
+              <p className="text-lg font-semibold font-mono">{formatNumber(mirror.last_lsn || 0)}</p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-green-100 rounded-lg">
+              <Database className="w-5 h-5 text-green-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Sync Batch ID</p>
+              <p className="text-lg font-semibold font-mono">{formatNumber(mirror.last_sync_batch_id || 0)}</p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-purple-100 rounded-lg">
+              <Table className="w-5 h-5 text-purple-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Tables</p>
+              <p className="text-lg font-semibold">{mirror.tables?.length || 0}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Tables */}
+      <div className="bg-white rounded-lg shadow">
+        <div className="p-4 border-b">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Table className="w-5 h-5" />
+            Table Status
+          </h2>
+        </div>
+        {mirror.tables && mirror.tables.length > 0 ? (
+          <div className="divide-y">
+            {mirror.tables.map((table) => (
+              <div key={table.table_name} className="p-4">
+                <div
+                  className="flex items-center justify-between cursor-pointer"
+                  onClick={() => toggleTableExpanded(table.table_name)}
+                >
+                  <div className="flex items-center gap-3">
+                    {expandedTables.has(table.table_name) ? (
+                      <ChevronUp className="w-4 h-4 text-gray-400" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-gray-400" />
+                    )}
+                    <div>
+                      <span className="font-mono text-sm font-medium">{table.table_name}</span>
+                      <p className="text-xs text-gray-500">
+                        {formatNumber(table.rows_synced)} rows synced
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(table.status)}`}>
+                      {table.status}
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        performAction('resync', table.table_name);
+                      }}
+                      disabled={actionLoading === `resync-${table.table_name}`}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50"
+                      title="Resync this table"
+                    >
+                      {actionLoading === `resync-${table.table_name}` ? (
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3 h-3" />
+                      )}
+                      Resync
+                    </button>
+                  </div>
+                </div>
+                {expandedTables.has(table.table_name) && (
+                  <div className="mt-4 ml-7 p-3 bg-gray-50 rounded-lg">
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-500">Status:</span>
+                        <span className="ml-2 font-medium">{table.status}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Rows Synced:</span>
+                        <span className="ml-2 font-medium font-mono">{formatNumber(table.rows_synced)}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Last Synced:</span>
+                        <span className="ml-2 font-medium">{formatDate(table.last_synced_at)}</span>
+                      </div>
+                      {table.error_message && (
+                        <div className="col-span-2">
+                          <span className="text-red-500">Error:</span>
+                          <span className="ml-2 text-red-700">{table.error_message}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="p-8 text-center text-gray-500">
+            <Table className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+            <p>No table status information available yet.</p>
+            <p className="text-sm mt-1">Table status will appear once the mirror starts syncing.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Mirror?</h3>
+            <p className="text-gray-600 mb-4">
+              Are you sure you want to delete &quot;{mirror.name}&quot;? This will stop replication and clean up
+              the replication slot and publication on the source database.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteMirror}
+                disabled={actionLoading === 'delete'}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                {actionLoading === 'delete' ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

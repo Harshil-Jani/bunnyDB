@@ -30,8 +30,6 @@ export default function Home() {
   const [mirrors, setMirrors] = useState<Mirror[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedMirror, setSelectedMirror] = useState<Mirror | null>(null);
-
   const fetchMirrors = async () => {
     try {
       const res = await fetch(`${API_URL}/v1/mirrors`);
@@ -46,17 +44,6 @@ export default function Home() {
     }
   };
 
-  const fetchMirrorDetails = async (name: string) => {
-    try {
-      const res = await fetch(`${API_URL}/v1/mirrors/${name}`);
-      if (!res.ok) throw new Error('Failed to fetch mirror details');
-      const data = await res.json();
-      setSelectedMirror(data);
-    } catch (err) {
-      console.error('Failed to fetch mirror details:', err);
-    }
-  };
-
   const performAction = async (name: string, action: string) => {
     try {
       const res = await fetch(`${API_URL}/v1/mirrors/${name}/${action}`, {
@@ -64,9 +51,6 @@ export default function Home() {
       });
       if (!res.ok) throw new Error(`Failed to ${action} mirror`);
       fetchMirrors();
-      if (selectedMirror?.name === name) {
-        fetchMirrorDetails(name);
-      }
     } catch (err) {
       console.error(`Failed to ${action}:`, err);
     }
@@ -168,7 +152,7 @@ export default function Home() {
             <div
               key={mirror.name}
               className="bg-white rounded-lg shadow hover:shadow-md transition-shadow cursor-pointer"
-              onClick={() => fetchMirrorDetails(mirror.name)}
+              onClick={() => router.push(`/mirrors/${encodeURIComponent(mirror.name)}`)}
             >
               <div className="p-6">
                 <div className="flex justify-between items-start">
@@ -241,75 +225,6 @@ export default function Home() {
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Mirror Details Modal */}
-      {selectedMirror && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-auto">
-            <div className="p-6 border-b">
-              <div className="flex justify-between items-center">
-                <h2 className="text-xl font-bold">{selectedMirror.name}</h2>
-                <button
-                  onClick={() => setSelectedMirror(null)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm text-gray-500">Status</label>
-                  <p className={`inline-block px-2 py-1 rounded text-sm ${getStatusColor(selectedMirror.status)}`}>
-                    {selectedMirror.status}
-                  </p>
-                </div>
-                <div>
-                  <label className="text-sm text-gray-500">Last LSN</label>
-                  <p className="font-mono">{selectedMirror.last_lsn}</p>
-                </div>
-                <div>
-                  <label className="text-sm text-gray-500">Slot</label>
-                  <p className="font-mono text-sm">{selectedMirror.slot_name}</p>
-                </div>
-                <div>
-                  <label className="text-sm text-gray-500">Publication</label>
-                  <p className="font-mono text-sm">{selectedMirror.publication_name}</p>
-                </div>
-              </div>
-
-              {selectedMirror.tables && selectedMirror.tables.length > 0 && (
-                <div>
-                  <h3 className="font-semibold mb-2">Tables</h3>
-                  <div className="border rounded divide-y">
-                    {selectedMirror.tables.map((table) => (
-                      <div key={table.table_name} className="p-3 flex justify-between items-center">
-                        <div>
-                          <span className="font-mono text-sm">{table.table_name}</span>
-                          <p className="text-xs text-gray-500">{table.rows_synced} rows synced</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={`px-2 py-1 rounded text-xs ${getStatusColor(table.status)}`}>
-                            {table.status}
-                          </span>
-                          <button
-                            onClick={() => performAction(selectedMirror.name, `resync/${table.table_name}`)}
-                            className="p-1 text-gray-400 hover:text-blue-500"
-                            title="Resync this table"
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
         </div>
       )}
     </div>

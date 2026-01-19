@@ -235,25 +235,50 @@ func (h *Handler) GetMirrorStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workflowID := fmt.Sprintf("cdc-%s", mirrorName)
+	// First try to get state from catalog (always available)
+	var response MirrorStatusResponse
+	var errMsg *string
+	err := h.CatalogPool.QueryRow(ctx, `
+		SELECT mirror_name, status,
+			COALESCE(slot_name, ''),
+			COALESCE(publication_name, ''),
+			COALESCE(last_lsn, 0),
+			COALESCE(last_sync_batch_id, 0),
+			error_message,
+			COALESCE(error_count, 0)
+		FROM bunny_internal.mirror_state
+		WHERE mirror_name = $1
+	`, mirrorName).Scan(
+		&response.Name, &response.Status, &response.SlotName, &response.PublicationName,
+		&response.LastLSN, &response.LastSyncBatchID, &errMsg, &response.ErrorCount)
 
-	// Query workflow state
-	resp, err := h.TemporalClient.QueryWorkflow(ctx, workflowID, "", workflows.QueryFlowState)
 	if err != nil {
-		slog.Error("failed to query workflow", slog.Any("error", err))
 		writeError(w, http.StatusNotFound, "mirror not found")
 		return
 	}
 
-	var state model.CDCFlowState
-	if err := resp.Get(&state); err != nil {
-		slog.Error("failed to decode workflow state", slog.Any("error", err))
-		writeError(w, http.StatusInternalServerError, "failed to get mirror status")
-		return
+	if errMsg != nil {
+		response.ErrorMessage = *errMsg
+	}
+
+	// Try to get live state from workflow (may not be available if workflow is still starting)
+	workflowID := fmt.Sprintf("cdc-%s", mirrorName)
+	resp, err := h.TemporalClient.QueryWorkflow(ctx, workflowID, "", workflows.QueryFlowState)
+	if err == nil {
+		var state model.CDCFlowState
+		if err := resp.Get(&state); err == nil {
+			// Update with live workflow state
+			response.Status = string(state.Status)
+			response.SlotName = state.SlotName
+			response.PublicationName = state.PublicationName
+			response.LastLSN = state.LastLSN
+			response.LastSyncBatchID = state.LastSyncBatchID
+			response.ErrorMessage = state.ErrorMessage
+			response.ErrorCount = state.ErrorCount
+		}
 	}
 
 	// Get table statuses from catalog
-	var tables []TableStatusResponse
 	rows, err := h.CatalogPool.Query(ctx, `
 		SELECT table_name, status, rows_synced, last_synced_at
 		FROM bunny_stats.table_sync_status
@@ -264,21 +289,11 @@ func (h *Handler) GetMirrorStatus(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var ts TableStatusResponse
 			rows.Scan(&ts.TableName, &ts.Status, &ts.RowsSynced, &ts.LastSyncedAt)
-			tables = append(tables, ts)
+			response.Tables = append(response.Tables, ts)
 		}
 	}
 
-	writeJSON(w, http.StatusOK, MirrorStatusResponse{
-		Name:            mirrorName,
-		Status:          string(state.Status),
-		SlotName:        state.SlotName,
-		PublicationName: state.PublicationName,
-		LastLSN:         state.LastLSN,
-		LastSyncBatchID: state.LastSyncBatchID,
-		ErrorMessage:    state.ErrorMessage,
-		ErrorCount:      state.ErrorCount,
-		Tables:          tables,
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 // PauseMirror pauses a mirror
