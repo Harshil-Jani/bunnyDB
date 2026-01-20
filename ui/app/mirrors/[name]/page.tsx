@@ -25,6 +25,7 @@ import {
   Plus,
   X,
   Save,
+  Search,
 } from 'lucide-react';
 
 interface LogEntry {
@@ -39,6 +40,8 @@ interface TableStatus {
   table_name: string;
   status: string;
   rows_synced: number;
+  rows_inserted?: number;
+  rows_updated?: number;
   last_synced_at?: string;
   error_message?: string;
 }
@@ -83,6 +86,9 @@ export default function MirrorDetailPage() {
   const [tableMappings, setTableMappings] = useState<TableMapping[]>([]);
   const [savingTables, setSavingTables] = useState(false);
   const [tableEditorError, setTableEditorError] = useState<string | null>(null);
+  const [tableSearch, setTableSearch] = useState('');
+  const [tableEditorSearch, setTableEditorSearch] = useState('');
+  const [allTables, setAllTables] = useState<TableStatus[]>([]);
 
   const fetchMirrorDetails = useCallback(async () => {
     try {
@@ -147,16 +153,33 @@ export default function MirrorDetailPage() {
     }
   };
 
+  const fetchAllTables = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/tables`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.tables && data.tables.length > 0) {
+          setAllTables(data.tables);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch all tables:', err);
+    }
+  }, [mirrorName]);
+
   useEffect(() => {
     fetchMirrorDetails();
     fetchLogs();
+    fetchAllTables();
     const mirrorInterval = setInterval(fetchMirrorDetails, 5000);
     const logsInterval = setInterval(fetchLogs, 10000);
+    const tablesInterval = setInterval(fetchAllTables, 10000);
     return () => {
       clearInterval(mirrorInterval);
       clearInterval(logsInterval);
+      clearInterval(tablesInterval);
     };
-  }, [fetchMirrorDetails, fetchLogs]);
+  }, [fetchMirrorDetails, fetchLogs, fetchAllTables]);
 
   const toggleTableExpanded = (tableName: string) => {
     setExpandedTables((prev) => {
@@ -538,7 +561,7 @@ export default function MirrorDetailPage() {
             </div>
             <div>
               <p className="text-sm text-gray-500">Tables</p>
-              <p className="text-lg font-semibold">{mirror.tables?.length || 0}</p>
+              <p className="text-lg font-semibold">{allTables.length || mirror.tables?.length || 0}</p>
             </div>
           </div>
         </div>
@@ -558,7 +581,7 @@ export default function MirrorDetailPage() {
             >
               <div className="flex items-center gap-2">
                 <Table className="w-4 h-4" />
-                Tables ({mirror.tables?.length || 0})
+                Tables ({allTables.length || mirror.tables?.length || 0})
               </div>
             </button>
             <button
@@ -580,83 +603,126 @@ export default function MirrorDetailPage() {
         {/* Tables Tab */}
         {activeTab === 'tables' && (
           <>
-            {mirror.tables && mirror.tables.length > 0 ? (
-              <div className="divide-y">
-                {mirror.tables.map((table) => (
-                  <div key={table.table_name} className="p-4">
-                    <div
-                      className="flex items-center justify-between cursor-pointer"
-                      onClick={() => toggleTableExpanded(table.table_name)}
-                    >
-                      <div className="flex items-center gap-3">
-                        {expandedTables.has(table.table_name) ? (
-                          <ChevronUp className="w-4 h-4 text-gray-400" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4 text-gray-400" />
-                        )}
-                        <div>
-                          <span className="font-mono text-sm font-medium">{table.table_name}</span>
-                          <p className="text-xs text-gray-500">
-                            {formatNumber(table.rows_synced)} rows synced
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(table.status)}`}>
-                          {table.status}
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            performAction('resync', table.table_name);
-                          }}
-                          disabled={actionLoading === `resync-${table.table_name}`}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50"
-                          title="Resync this table"
-                        >
-                          {actionLoading === `resync-${table.table_name}` ? (
-                            <RefreshCw className="w-3 h-3 animate-spin" />
+            {/* Search bar */}
+            <div className="p-4 border-b">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search tables..."
+                  value={tableSearch}
+                  onChange={(e) => setTableSearch(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+            {(() => {
+              const tablesToShow = allTables.length > 0 ? allTables : (mirror.tables || []);
+              const filteredTables = tablesToShow.filter(t =>
+                t.table_name.toLowerCase().includes(tableSearch.toLowerCase())
+              );
+
+              return filteredTables.length > 0 ? (
+                <div className="divide-y max-h-[500px] overflow-y-auto">
+                  {filteredTables.map((table) => (
+                    <div key={table.table_name} className="p-4">
+                      <div
+                        className="flex items-center justify-between cursor-pointer"
+                        onClick={() => toggleTableExpanded(table.table_name)}
+                      >
+                        <div className="flex items-center gap-3">
+                          {expandedTables.has(table.table_name) ? (
+                            <ChevronUp className="w-4 h-4 text-gray-400" />
                           ) : (
-                            <RefreshCw className="w-3 h-3" />
+                            <ChevronDown className="w-4 h-4 text-gray-400" />
                           )}
-                          Resync
-                        </button>
-                      </div>
-                    </div>
-                    {expandedTables.has(table.table_name) && (
-                      <div className="mt-4 ml-7 p-3 bg-gray-50 rounded-lg">
-                        <div className="grid grid-cols-2 gap-4 text-sm">
                           <div>
-                            <span className="text-gray-500">Status:</span>
-                            <span className="ml-2 font-medium">{table.status}</span>
+                            <span className="font-mono text-sm font-medium">{table.table_name}</span>
+                            <p className="text-xs text-gray-500">
+                              {formatNumber(table.rows_synced)} rows synced
+                              {(table.rows_inserted !== undefined || table.rows_updated !== undefined) && (
+                                <span className="ml-2">
+                                  ({formatNumber(table.rows_inserted || 0)} inserted, {formatNumber(table.rows_updated || 0)} updated)
+                                </span>
+                              )}
+                            </p>
                           </div>
-                          <div>
-                            <span className="text-gray-500">Rows Synced:</span>
-                            <span className="ml-2 font-medium font-mono">{formatNumber(table.rows_synced)}</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-500">Last Synced:</span>
-                            <span className="ml-2 font-medium">{formatDate(table.last_synced_at)}</span>
-                          </div>
-                          {table.error_message && (
-                            <div className="col-span-2">
-                              <span className="text-red-500">Error:</span>
-                              <span className="ml-2 text-red-700">{table.error_message}</span>
-                            </div>
-                          )}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(table.status)}`}>
+                            {table.status}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              performAction('resync', table.table_name);
+                            }}
+                            disabled={actionLoading === `resync-${table.table_name}`}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50"
+                            title="Resync this table"
+                          >
+                            {actionLoading === `resync-${table.table_name}` ? (
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <RefreshCw className="w-3 h-3" />
+                            )}
+                            Resync
+                          </button>
                         </div>
                       </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="p-8 text-center text-gray-500">
-                <Table className="w-12 h-12 mx-auto text-gray-300 mb-3" />
-                <p>No table status information available yet.</p>
-                <p className="text-sm mt-1">Table status will appear once the mirror starts syncing.</p>
-              </div>
-            )}
+                      {expandedTables.has(table.table_name) && (
+                        <div className="mt-4 ml-7 p-3 bg-gray-50 rounded-lg">
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <span className="text-gray-500">Status:</span>
+                              <span className="ml-2 font-medium">{table.status}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Rows Synced:</span>
+                              <span className="ml-2 font-medium font-mono">{formatNumber(table.rows_synced)}</span>
+                            </div>
+                            {table.rows_inserted !== undefined && (
+                              <div>
+                                <span className="text-gray-500">Rows Inserted:</span>
+                                <span className="ml-2 font-medium font-mono text-green-600">{formatNumber(table.rows_inserted)}</span>
+                              </div>
+                            )}
+                            {table.rows_updated !== undefined && (
+                              <div>
+                                <span className="text-gray-500">Rows Updated:</span>
+                                <span className="ml-2 font-medium font-mono text-blue-600">{formatNumber(table.rows_updated)}</span>
+                              </div>
+                            )}
+                            <div>
+                              <span className="text-gray-500">Last Synced:</span>
+                              <span className="ml-2 font-medium">{formatDate(table.last_synced_at)}</span>
+                            </div>
+                            {table.error_message && (
+                              <div className="col-span-2">
+                                <span className="text-red-500">Error:</span>
+                                <span className="ml-2 text-red-700">{table.error_message}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-8 text-center text-gray-500">
+                  <Table className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                  {tableSearch ? (
+                    <p>No tables matching &quot;{tableSearch}&quot;</p>
+                  ) : (
+                    <>
+                      <p>No table status information available yet.</p>
+                      <p className="text-sm mt-1">Table status will appear once the mirror starts syncing.</p>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
           </>
         )}
 
@@ -759,8 +825,31 @@ export default function MirrorDetailPage() {
                 </div>
               )}
 
-              <div className="space-y-4">
-                {tableMappings.map((mapping, index) => (
+              {/* Search bar for table editor */}
+              <div className="mb-4 relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search tables..."
+                  value={tableEditorSearch}
+                  onChange={(e) => setTableEditorSearch(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs text-gray-400">
+                  {tableMappings.length} tables
+                </span>
+              </div>
+
+              <div className="space-y-4 max-h-[400px] overflow-y-auto">
+                {tableMappings
+                  .map((mapping, index) => ({ mapping, index }))
+                  .filter(({ mapping }) =>
+                    tableEditorSearch === '' ||
+                    mapping.source_table.toLowerCase().includes(tableEditorSearch.toLowerCase()) ||
+                    mapping.source_schema.toLowerCase().includes(tableEditorSearch.toLowerCase()) ||
+                    mapping.destination_table.toLowerCase().includes(tableEditorSearch.toLowerCase())
+                  )
+                  .map(({ mapping, index }) => (
                   <div key={index} className="bg-gray-50 rounded-lg p-4 border">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 grid grid-cols-2 gap-4">
@@ -821,6 +910,16 @@ export default function MirrorDetailPage() {
                     <Table className="w-12 h-12 mx-auto text-gray-300 mb-3" />
                     <p>No tables configured</p>
                     <p className="text-sm mt-1">Add tables to replicate</p>
+                  </div>
+                )}
+
+                {tableMappings.length > 0 && tableEditorSearch && tableMappings.filter(m =>
+                  m.source_table.toLowerCase().includes(tableEditorSearch.toLowerCase()) ||
+                  m.source_schema.toLowerCase().includes(tableEditorSearch.toLowerCase())
+                ).length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    <Search className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                    <p>No tables matching &quot;{tableEditorSearch}&quot;</p>
                   </div>
                 )}
               </div>

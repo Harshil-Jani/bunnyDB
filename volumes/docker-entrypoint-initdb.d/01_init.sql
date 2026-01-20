@@ -138,6 +138,8 @@ CREATE TABLE IF NOT EXISTS bunny_stats.table_sync_status (
     table_name VARCHAR(512) NOT NULL,
     status VARCHAR(50) DEFAULT 'PENDING',  -- PENDING, SYNCING, SYNCED, RESYNCING, ERROR
     rows_synced BIGINT DEFAULT 0,
+    rows_inserted BIGINT DEFAULT 0,
+    rows_updated BIGINT DEFAULT 0,
     last_synced_at TIMESTAMP WITH TIME ZONE,
     last_resync_requested_at TIMESTAMP WITH TIME ZONE,
     error_message TEXT,

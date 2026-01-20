@@ -326,7 +326,9 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 	lastHeartbeat := time.Now()
 	recordsProcessed := int64(0)
 	batchID := int64(0)
-	tableRowCounts := make(map[string]int64) // Track rows per table
+	tableRowCounts := make(map[string]int64)    // Track total rows per table
+	tableInsertCounts := make(map[string]int64) // Track inserts per table
+	tableUpdateCounts := make(map[string]int64) // Track updates per table
 
 	logger.Info("CDC sync loop started",
 		slog.Int("batchSize", batchSize),
@@ -403,6 +405,14 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 			recordsProcessed++
 			tableRowCounts[tableKey]++
 
+			// Track inserts vs updates
+			switch rec.Operation {
+			case "INSERT":
+				tableInsertCounts[tableKey]++
+			case "UPDATE":
+				tableUpdateCounts[tableKey]++
+			}
+
 			if recordsProcessed%100 == 0 {
 				logger.Debug("CDC progress",
 					slog.Int64("records", recordsProcessed),
@@ -413,21 +423,27 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 		// Update table sync status periodically (every batch)
 		if len(records) > 0 {
 			for tableName, rowCount := range tableRowCounts {
+				insertCount := tableInsertCounts[tableName]
+				updateCount := tableUpdateCounts[tableName]
 				_, err := a.CatalogPool.Exec(ctx, `
-					INSERT INTO bunny_stats.table_sync_status (mirror_name, table_name, status, rows_synced, last_synced_at)
-					VALUES ($1, $2, 'RUNNING', $3, NOW())
+					INSERT INTO bunny_stats.table_sync_status (mirror_name, table_name, status, rows_synced, rows_inserted, rows_updated, last_synced_at)
+					VALUES ($1, $2, 'RUNNING', $3, $4, $5, NOW())
 					ON CONFLICT (mirror_name, table_name) DO UPDATE SET
 						status = 'RUNNING',
 						rows_synced = bunny_stats.table_sync_status.rows_synced + $3,
+						rows_inserted = COALESCE(bunny_stats.table_sync_status.rows_inserted, 0) + $4,
+						rows_updated = COALESCE(bunny_stats.table_sync_status.rows_updated, 0) + $5,
 						last_synced_at = NOW(),
 						updated_at = NOW()
-				`, input.MirrorName, tableName, rowCount)
+				`, input.MirrorName, tableName, rowCount, insertCount, updateCount)
 				if err != nil {
 					logger.Warn("failed to update table sync status", slog.String("table", tableName), slog.Any("error", err))
 				}
 			}
 			// Reset counts after updating
 			tableRowCounts = make(map[string]int64)
+			tableInsertCounts = make(map[string]int64)
+			tableUpdateCounts = make(map[string]int64)
 		}
 
 		// Update LSN and batch ID

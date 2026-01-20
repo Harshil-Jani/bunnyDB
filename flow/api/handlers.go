@@ -93,6 +93,8 @@ type TableStatusResponse struct {
 	TableName    string     `json:"table_name"`
 	Status       string     `json:"status"`
 	RowsSynced   int64      `json:"rows_synced"`
+	RowsInserted int64      `json:"rows_inserted,omitempty"`
+	RowsUpdated  int64      `json:"rows_updated,omitempty"`
 	LastSyncedAt *time.Time `json:"last_synced_at,omitempty"`
 }
 
@@ -341,7 +343,7 @@ func (h *Handler) GetMirrorStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Get table statuses from catalog
 	rows, err := h.CatalogPool.Query(ctx, `
-		SELECT table_name, status, rows_synced, last_synced_at
+		SELECT table_name, status, rows_synced, COALESCE(rows_inserted, 0), COALESCE(rows_updated, 0), last_synced_at
 		FROM bunny_stats.table_sync_status
 		WHERE mirror_name = $1
 	`, mirrorName)
@@ -349,7 +351,7 @@ func (h *Handler) GetMirrorStatus(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var ts TableStatusResponse
-			rows.Scan(&ts.TableName, &ts.Status, &ts.RowsSynced, &ts.LastSyncedAt)
+			rows.Scan(&ts.TableName, &ts.Status, &ts.RowsSynced, &ts.RowsInserted, &ts.RowsUpdated, &ts.LastSyncedAt)
 			response.Tables = append(response.Tables, ts)
 		}
 	}
@@ -806,7 +808,7 @@ func (h *Handler) GetMirrorTables(w http.ResponseWriter, r *http.Request) {
 	// Get table sync status
 	syncStatusMap := make(map[string]TableStatusResponse)
 	rows, err := h.CatalogPool.Query(ctx, `
-		SELECT table_name, status, rows_synced, last_synced_at
+		SELECT table_name, status, rows_synced, COALESCE(rows_inserted, 0), COALESCE(rows_updated, 0), last_synced_at
 		FROM bunny_stats.table_sync_status
 		WHERE mirror_name = $1
 	`, mirrorName)
@@ -814,7 +816,7 @@ func (h *Handler) GetMirrorTables(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var ts TableStatusResponse
-			rows.Scan(&ts.TableName, &ts.Status, &ts.RowsSynced, &ts.LastSyncedAt)
+			rows.Scan(&ts.TableName, &ts.Status, &ts.RowsSynced, &ts.RowsInserted, &ts.RowsUpdated, &ts.LastSyncedAt)
 			syncStatusMap[ts.TableName] = ts
 		}
 	}
