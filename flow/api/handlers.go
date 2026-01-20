@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 
 	"github.com/bunnydb/bunnydb/flow/model"
@@ -371,10 +373,33 @@ func (h *Handler) PauseMirror(w http.ResponseWriter, r *http.Request) {
 		Signal: model.PauseSignal,
 	})
 	if err != nil {
-		slog.Error("failed to signal workflow", slog.Any("error", err))
-		writeError(w, http.StatusInternalServerError, "failed to pause mirror")
+		slog.Error("failed to signal workflow", slog.String("workflowID", workflowID), slog.Any("error", err))
+
+		// Check if workflow is not found or already completed
+		var notFoundErr *serviceerror.NotFound
+		if strings.Contains(err.Error(), "workflow execution already completed") {
+			// Update database status to reflect the workflow is not running
+			h.CatalogPool.Exec(ctx, `
+				UPDATE bunny_internal.mirror_state
+				SET status = 'TERMINATED', error_message = 'Workflow completed unexpectedly', updated_at = NOW()
+				WHERE mirror_name = $1 AND status NOT IN ('TERMINATED', 'PAUSED', 'FAILED')
+			`, mirrorName)
+			writeError(w, http.StatusConflict, "workflow has already completed - mirror status updated. Please restart the mirror.")
+			return
+		} else if errors.As(err, &notFoundErr) {
+			writeError(w, http.StatusNotFound, "workflow not found - mirror may not be running")
+			return
+		}
+
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to pause mirror: %v", err))
 		return
 	}
+
+	// Update status in database
+	h.CatalogPool.Exec(ctx, `
+		UPDATE bunny_internal.mirror_state SET status = 'PAUSING', updated_at = NOW()
+		WHERE mirror_name = $1
+	`, mirrorName)
 
 	writeJSON(w, http.StatusOK, MirrorResponse{
 		Name:    mirrorName,
@@ -399,8 +424,8 @@ func (h *Handler) ResumeMirror(w http.ResponseWriter, r *http.Request) {
 		Signal: model.ResumeSignal,
 	})
 	if err != nil {
-		slog.Error("failed to signal workflow", slog.Any("error", err))
-		writeError(w, http.StatusInternalServerError, "failed to resume mirror")
+		slog.Error("failed to signal workflow", slog.String("workflowID", workflowID), slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to resume mirror: %v", err))
 		return
 	}
 
@@ -523,6 +548,7 @@ func (h *Handler) ResyncMirror(w http.ResponseWriter, r *http.Request) {
 }
 
 // RetryMirror triggers an immediate retry, bypassing Temporal's backoff
+// If the workflow has completed, it will restart the workflow from scratch
 func (h *Handler) RetryMirror(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	mirrorName := r.PathValue("name")
@@ -541,6 +567,13 @@ func (h *Handler) RetryMirror(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
+		// Check if workflow is completed - if so, restart it
+		if strings.Contains(err.Error(), "workflow execution already completed") {
+			slog.Info("workflow completed, restarting mirror", slog.String("mirror", mirrorName))
+			h.restartMirrorWorkflow(ctx, w, mirrorName)
+			return
+		}
+
 		slog.Error("failed to signal workflow", slog.Any("error", err))
 		writeError(w, http.StatusInternalServerError, "failed to trigger retry")
 		return
@@ -553,6 +586,122 @@ func (h *Handler) RetryMirror(w http.ResponseWriter, r *http.Request) {
 		Status:  "RETRYING",
 		Message: "immediate retry signal sent (backoff bypassed)",
 	})
+}
+
+// restartMirrorWorkflow restarts a mirror workflow from the stored configuration
+func (h *Handler) restartMirrorWorkflow(ctx context.Context, w http.ResponseWriter, mirrorName string) {
+	// Get mirror configuration from database
+	var sourcePeerName, destPeerName string
+	var configJSON []byte
+	err := h.CatalogPool.QueryRow(ctx, `
+		SELECT sp.name, dp.name, m.config
+		FROM bunny_internal.mirrors m
+		JOIN bunny_internal.peers sp ON m.source_peer_id = sp.id
+		JOIN bunny_internal.peers dp ON m.destination_peer_id = dp.id
+		WHERE m.name = $1
+	`, mirrorName).Scan(&sourcePeerName, &destPeerName, &configJSON)
+	if err != nil {
+		slog.Error("failed to get mirror config", slog.Any("error", err))
+		writeError(w, http.StatusNotFound, "mirror configuration not found")
+		return
+	}
+
+	// Parse config
+	var config map[string]interface{}
+	if err := json.Unmarshal(configJSON, &config); err != nil {
+		slog.Error("failed to parse mirror config", slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, "failed to parse mirror configuration")
+		return
+	}
+
+	// Get table mappings from config
+	var tableMappings []model.TableMapping
+	if tm, ok := config["table_mappings"].([]interface{}); ok {
+		for _, t := range tm {
+			if tmap, ok := t.(map[string]interface{}); ok {
+				tableMappings = append(tableMappings, model.TableMapping{
+					SourceSchema:      getString(tmap, "source_schema"),
+					SourceTable:       getString(tmap, "source_table"),
+					DestinationSchema: getString(tmap, "destination_schema"),
+					DestinationTable:  getString(tmap, "destination_table"),
+					PartitionKey:      getString(tmap, "partition_key"),
+				})
+			}
+		}
+	}
+
+	// Get last LSN and batch ID from mirror_state to resume from
+	var lastLSN int64
+	var lastBatchID int64
+	h.CatalogPool.QueryRow(ctx, `
+		SELECT COALESCE(last_lsn, 0), COALESCE(last_sync_batch_id, 0)
+		FROM bunny_internal.mirror_state WHERE mirror_name = $1
+	`, mirrorName).Scan(&lastLSN, &lastBatchID)
+
+	// Start the workflow
+	workflowID := fmt.Sprintf("cdc-%s", mirrorName)
+	workflowOptions := client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: h.Config.WorkerTaskQueue,
+	}
+
+	input := &workflows.CDCFlowInput{
+		MirrorName:         mirrorName,
+		SourcePeer:         sourcePeerName,
+		DestinationPeer:    destPeerName,
+		TableMappings:      tableMappings,
+		DoInitialSnapshot:  false, // Don't re-snapshot on restart
+		MaxBatchSize:       uint32(getInt(config, "max_batch_size", 1000)),
+		IdleTimeoutSeconds: uint64(getInt(config, "idle_timeout_seconds", 60)),
+	}
+
+	// Create initial state with last LSN/BatchID to resume CDC
+	state := model.NewCDCFlowState(mirrorName)
+	state.LastLSN = lastLSN
+	state.LastSyncBatchID = lastBatchID
+	state.SyncFlowOptions.TableMappings = tableMappings
+	state.SyncFlowOptions.BatchSize = input.MaxBatchSize
+	state.SyncFlowOptions.IdleTimeoutSeconds = input.IdleTimeoutSeconds
+
+	we, err := h.TemporalClient.ExecuteWorkflow(ctx, workflowOptions, workflows.CDCFlowWorkflow, input, state)
+	if err != nil {
+		slog.Error("failed to restart workflow", slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to restart mirror: %v", err))
+		return
+	}
+
+	// Update mirror state
+	h.CatalogPool.Exec(ctx, `
+		UPDATE bunny_internal.mirror_state
+		SET status = 'RUNNING', error_message = NULL, error_count = 0, updated_at = NOW()
+		WHERE mirror_name = $1
+	`, mirrorName)
+
+	slog.Info("restarted mirror workflow",
+		slog.String("mirror", mirrorName),
+		slog.String("workflowID", we.GetID()),
+		slog.Int64("lastLSN", lastLSN))
+
+	writeJSON(w, http.StatusOK, MirrorResponse{
+		Name:    mirrorName,
+		Status:  "RUNNING",
+		Message: "mirror workflow restarted",
+	})
+}
+
+// Helper functions for config parsing
+func getString(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func getInt(m map[string]interface{}, key string, defaultVal int) int {
+	if v, ok := m[key].(float64); ok {
+		return int(v)
+	}
+	return defaultVal
 }
 
 // SyncSchema triggers a schema sync operation
