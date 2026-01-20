@@ -371,9 +371,15 @@ func CDCFlowWorkflow(
 		return state, workflow.NewContinueAsNewError(ctx, CDCFlowWorkflow, input, state)
 
 	case model.RetryNowSignal:
-		// Immediate retry - continue as new without backoff
+		// Drop replication slot first to release the connection, then restart CDC
+		// This ensures clean restart without "slot is active" errors
 		state.ActiveSignal = model.NoopSignal
-		return state, workflow.NewContinueAsNewError(ctx, CDCFlowWorkflow, input, state)
+		state.ClearError() // Reset error count for fresh retry
+		return state, workflow.NewContinueAsNewError(ctx, DropFlowWorkflow, &DropFlowInput{
+			MirrorName: input.MirrorName,
+			IsResync:   true, // Restart CDC after dropping
+			Config:     input,
+		})
 
 	case model.SyncSchemaSignal:
 		// Drop replication slot first to release the connection, then restart CDC
