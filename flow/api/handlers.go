@@ -902,6 +902,101 @@ func (h *Handler) getPublicationTables(ctx context.Context, peerName, publicatio
 	return tables, nil
 }
 
+// GetAvailableTables returns tables from source database that are NOT already in the mirror
+func (h *Handler) GetAvailableTables(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	mirrorName := r.PathValue("name")
+
+	if mirrorName == "" {
+		writeError(w, http.StatusBadRequest, "mirror name is required")
+		return
+	}
+
+	// Get source peer and publication name
+	var sourcePeerName string
+	var publicationName string
+	err := h.CatalogPool.QueryRow(ctx, `
+		SELECT p.name, COALESCE(ms.publication_name, '')
+		FROM bunny_internal.mirrors m
+		JOIN bunny_internal.peers p ON m.source_peer_id = p.id
+		LEFT JOIN bunny_internal.mirror_state ms ON m.name = ms.mirror_name
+		WHERE m.name = $1
+	`, mirrorName).Scan(&sourcePeerName, &publicationName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "mirror not found")
+		return
+	}
+
+	// Get current tables in the mirror (from publication)
+	currentTables := make(map[string]bool)
+	if publicationName != "" {
+		pubTables, err := h.getPublicationTables(ctx, sourcePeerName, publicationName)
+		if err == nil {
+			for _, t := range pubTables {
+				currentTables[t] = true
+			}
+		}
+	}
+
+	// Get peer connection info
+	var host, user, password, database, sslMode string
+	var port int
+	err = h.CatalogPool.QueryRow(ctx, `
+		SELECT host, port, username, password, database, ssl_mode
+		FROM bunny_internal.peers WHERE name = $1
+	`, sourcePeerName).Scan(&host, &port, &user, &password, &database, &sslMode)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get peer config")
+		return
+	}
+
+	// Connect to source database
+	connStr := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		user, password, host, port, database, sslMode)
+
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to connect to source: %s", err.Error()))
+		return
+	}
+	defer pool.Close()
+
+	// Query for ALL tables in the source database
+	rows, err := pool.Query(ctx, `
+		SELECT schemaname, tablename
+		FROM pg_catalog.pg_tables
+		WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		ORDER BY schemaname, tablename
+	`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to query tables: %s", err.Error()))
+		return
+	}
+	defer rows.Close()
+
+	var availableTables []TableInfo
+	for rows.Next() {
+		var schema, tableName string
+		if err := rows.Scan(&schema, &tableName); err != nil {
+			continue
+		}
+		fullName := fmt.Sprintf("%s.%s", schema, tableName)
+		// Only include tables NOT already in the mirror
+		if !currentTables[fullName] {
+			availableTables = append(availableTables, TableInfo{
+				Schema:    schema,
+				TableName: tableName,
+			})
+		}
+	}
+
+	if availableTables == nil {
+		availableTables = []TableInfo{}
+	}
+
+	writeJSON(w, http.StatusOK, availableTables)
+}
+
 // UpdateMirrorTables updates the table mappings for a paused mirror
 func (h *Handler) UpdateMirrorTables(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -1571,6 +1666,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/mirrors/{name}/sync-schema", corsMiddleware(h.SyncSchema))
 	mux.HandleFunc("GET /v1/mirrors/{name}/logs", corsMiddleware(h.GetMirrorLogs))
 	mux.HandleFunc("GET /v1/mirrors/{name}/tables", corsMiddleware(h.GetMirrorTables))
+	mux.HandleFunc("GET /v1/mirrors/{name}/available-tables", corsMiddleware(h.GetAvailableTables))
 	mux.HandleFunc("PUT /v1/mirrors/{name}/tables", corsMiddleware(h.UpdateMirrorTables))
 
 	// Health check

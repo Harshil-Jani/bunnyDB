@@ -89,6 +89,8 @@ export default function MirrorDetailPage() {
   const [tableSearch, setTableSearch] = useState('');
   const [tableEditorSearch, setTableEditorSearch] = useState('');
   const [allTables, setAllTables] = useState<TableStatus[]>([]);
+  const [availableTables, setAvailableTables] = useState<{ schema: string; table_name: string }[]>([]);
+  const [loadingAvailableTables, setLoadingAvailableTables] = useState(false);
 
   const fetchMirrorDetails = useCallback(async () => {
     try {
@@ -167,6 +169,21 @@ export default function MirrorDetailPage() {
     }
   }, [mirrorName]);
 
+  const fetchAvailableTables = useCallback(async () => {
+    setLoadingAvailableTables(true);
+    try {
+      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/available-tables`);
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableTables(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch available tables:', err);
+    } finally {
+      setLoadingAvailableTables(false);
+    }
+  }, [mirrorName]);
+
   useEffect(() => {
     fetchMirrorDetails();
     fetchLogs();
@@ -231,21 +248,40 @@ export default function MirrorDetailPage() {
 
   const openTableEditor = async () => {
     setTableEditorError(null);
-    await fetchTableMappings();
+    setTableEditorSearch('');
+    await Promise.all([fetchTableMappings(), fetchAvailableTables()]);
     setShowTableEditor(true);
   };
 
-  const addTableMapping = () => {
+  const addTableFromAvailable = (schema: string, tableName: string) => {
+    // Check if already added
+    const exists = tableMappings.some(
+      (m) => m.source_schema === schema && m.source_table === tableName
+    );
+    if (exists) return;
+
     setTableMappings([...tableMappings, {
-      source_schema: 'public',
-      source_table: '',
-      destination_schema: 'public',
-      destination_table: '',
+      source_schema: schema,
+      source_table: tableName,
+      destination_schema: schema,
+      destination_table: tableName,
     }]);
+    // Remove from available tables
+    setAvailableTables(availableTables.filter(
+      (t) => !(t.schema === schema && t.table_name === tableName)
+    ));
   };
 
   const removeTableMapping = (index: number) => {
+    const removed = tableMappings[index];
     setTableMappings(tableMappings.filter((_, i) => i !== index));
+    // Add back to available tables
+    if (removed) {
+      setAvailableTables([...availableTables, {
+        schema: removed.source_schema,
+        table_name: removed.source_table,
+      }].sort((a, b) => `${a.schema}.${a.table_name}`.localeCompare(`${b.schema}.${b.table_name}`)));
+    }
   };
 
   const updateTableMapping = (index: number, field: keyof TableMapping, value: string) => {
@@ -924,13 +960,64 @@ export default function MirrorDetailPage() {
                 )}
               </div>
 
-              <button
-                onClick={addTableMapping}
-                className="mt-4 flex items-center gap-2 px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200"
-              >
-                <Plus className="w-4 h-4" />
-                Add Table
-              </button>
+              {/* Available Tables Section */}
+              <div className="mt-6 border-t pt-4">
+                <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+                  <Plus className="w-4 h-4" />
+                  Add Tables from Source Database
+                </h4>
+                {loadingAvailableTables ? (
+                  <div className="flex items-center justify-center py-4">
+                    <RefreshCw className="w-5 h-5 animate-spin text-blue-500" />
+                    <span className="ml-2 text-sm text-gray-500">Loading available tables...</span>
+                  </div>
+                ) : availableTables.length > 0 ? (
+                  <>
+                    <div className="max-h-[200px] overflow-y-auto border rounded-lg divide-y">
+                      {availableTables
+                        .filter(t =>
+                          tableEditorSearch === '' ||
+                          t.table_name.toLowerCase().includes(tableEditorSearch.toLowerCase()) ||
+                          t.schema.toLowerCase().includes(tableEditorSearch.toLowerCase())
+                        )
+                        .map((table) => (
+                          <div
+                            key={`${table.schema}.${table.table_name}`}
+                            className="flex items-center justify-between px-3 py-2 hover:bg-gray-50"
+                          >
+                            <span className="font-mono text-sm">
+                              {table.schema}.{table.table_name}
+                            </span>
+                            <button
+                              onClick={() => addTableFromAvailable(table.schema, table.table_name)}
+                              className="flex items-center gap-1 px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200"
+                            >
+                              <Plus className="w-3 h-3" />
+                              Add
+                            </button>
+                          </div>
+                        ))}
+                      {availableTables.filter(t =>
+                        tableEditorSearch === '' ||
+                        t.table_name.toLowerCase().includes(tableEditorSearch.toLowerCase()) ||
+                        t.schema.toLowerCase().includes(tableEditorSearch.toLowerCase())
+                      ).length === 0 && (
+                        <div className="text-center py-4 text-gray-500 text-sm">
+                          No available tables matching search
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-2">
+                      {availableTables.length} table{availableTables.length !== 1 ? 's' : ''} available to add
+                    </p>
+                  </>
+                ) : (
+                  <div className="text-center py-4 text-gray-500 text-sm border rounded-lg bg-gray-50">
+                    <CheckCircle className="w-5 h-5 mx-auto text-green-500 mb-1" />
+                    All source tables are already in the mirror
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="p-6 border-t bg-gray-50 flex justify-end gap-3">
