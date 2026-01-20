@@ -322,7 +322,7 @@ export default function MirrorDetailPage() {
         throw new Error(data.error || 'Failed to update tables');
       }
       setShowTableEditor(false);
-      await fetchMirrorDetails();
+      await Promise.all([fetchMirrorDetails(), fetchAllTables()]);
     } catch (err) {
       setTableEditorError(err instanceof Error ? err.message : 'Failed to save tables');
     } finally {
