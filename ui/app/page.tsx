@@ -186,7 +186,7 @@ export default function Home() {
                 )}
 
                 <div className="mt-4 flex gap-2">
-                  {mirror.status === 'RUNNING' && (
+                  {!['PAUSED', 'PAUSING', 'TERMINATED', 'TERMINATING', 'FAILED'].includes(mirror.status?.toUpperCase()) && (
                     <button
                       onClick={(e) => { e.stopPropagation(); performAction(mirror.name, 'pause'); }}
                       className="flex items-center gap-1 px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200"
@@ -195,7 +195,7 @@ export default function Home() {
                       Pause
                     </button>
                   )}
-                  {mirror.status === 'PAUSED' && (
+                  {mirror.status?.toUpperCase() === 'PAUSED' && (
                     <button
                       onClick={(e) => { e.stopPropagation(); performAction(mirror.name, 'resume'); }}
                       className="flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200"

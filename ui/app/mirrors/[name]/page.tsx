@@ -22,6 +22,9 @@ import {
   Info,
   AlertTriangle,
   XCircle,
+  Plus,
+  X,
+  Save,
 } from 'lucide-react';
 
 interface LogEntry {
@@ -52,6 +55,15 @@ interface MirrorDetails {
   tables?: TableStatus[];
 }
 
+interface TableMapping {
+  source_schema: string;
+  source_table: string;
+  destination_schema: string;
+  destination_table: string;
+  partition_key?: string;
+  exclude_columns?: string[];
+}
+
 const API_URL = process.env.BUNNY_API_URL || 'http://localhost:8112';
 
 export default function MirrorDetailPage() {
@@ -67,6 +79,10 @@ export default function MirrorDetailPage() {
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [activeTab, setActiveTab] = useState<'tables' | 'logs'>('tables');
+  const [showTableEditor, setShowTableEditor] = useState(false);
+  const [tableMappings, setTableMappings] = useState<TableMapping[]>([]);
+  const [savingTables, setSavingTables] = useState(false);
+  const [tableEditorError, setTableEditorError] = useState<string | null>(null);
 
   const fetchMirrorDetails = useCallback(async () => {
     try {
@@ -152,6 +168,96 @@ export default function MirrorDetailPage() {
       }
       return next;
     });
+  };
+
+  const fetchTableMappings = async () => {
+    try {
+      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/tables`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.config?.table_mappings) {
+          setTableMappings(data.config.table_mappings);
+        } else if (mirror?.tables) {
+          // Fallback: create mappings from table status
+          setTableMappings(mirror.tables.map(t => {
+            const parts = t.table_name.split('.');
+            return {
+              source_schema: parts[0] || 'public',
+              source_table: parts[1] || t.table_name,
+              destination_schema: parts[0] || 'public',
+              destination_table: parts[1] || t.table_name,
+            };
+          }));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch table mappings:', err);
+    }
+  };
+
+  const openTableEditor = async () => {
+    setTableEditorError(null);
+    await fetchTableMappings();
+    setShowTableEditor(true);
+  };
+
+  const addTableMapping = () => {
+    setTableMappings([...tableMappings, {
+      source_schema: 'public',
+      source_table: '',
+      destination_schema: 'public',
+      destination_table: '',
+    }]);
+  };
+
+  const removeTableMapping = (index: number) => {
+    setTableMappings(tableMappings.filter((_, i) => i !== index));
+  };
+
+  const updateTableMapping = (index: number, field: keyof TableMapping, value: string) => {
+    const updated = [...tableMappings];
+    updated[index] = { ...updated[index], [field]: value };
+    // Auto-fill destination if empty
+    if (field === 'source_table' && !updated[index].destination_table) {
+      updated[index].destination_table = value;
+    }
+    if (field === 'source_schema' && !updated[index].destination_schema) {
+      updated[index].destination_schema = value;
+    }
+    setTableMappings(updated);
+  };
+
+  const saveTableMappings = async () => {
+    if (tableMappings.length === 0) {
+      setTableEditorError('At least one table mapping is required');
+      return;
+    }
+
+    const invalid = tableMappings.find(t => !t.source_table || !t.destination_table);
+    if (invalid) {
+      setTableEditorError('All table names are required');
+      return;
+    }
+
+    setSavingTables(true);
+    setTableEditorError(null);
+    try {
+      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/tables`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ table_mappings: tableMappings }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to update tables');
+      }
+      setShowTableEditor(false);
+      await fetchMirrorDetails();
+    } catch (err) {
+      setTableEditorError(err instanceof Error ? err.message : 'Failed to save tables');
+    } finally {
+      setSavingTables(false);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -307,7 +413,7 @@ export default function MirrorDetailPage() {
       <div className="bg-white rounded-lg shadow p-4">
         <h2 className="text-sm font-medium text-gray-500 mb-3">Actions</h2>
         <div className="flex flex-wrap gap-2">
-          {mirror.status === 'RUNNING' && (
+          {!['PAUSED', 'PAUSING', 'TERMINATED', 'TERMINATING', 'FAILED'].includes(mirror.status?.toUpperCase()) && (
             <button
               onClick={() => performAction('pause')}
               disabled={actionLoading === 'pause'}
@@ -321,19 +427,28 @@ export default function MirrorDetailPage() {
               Pause Mirror
             </button>
           )}
-          {mirror.status === 'PAUSED' && (
-            <button
-              onClick={() => performAction('resume')}
-              disabled={actionLoading === 'resume'}
-              className="flex items-center gap-2 px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 disabled:opacity-50"
-            >
-              {actionLoading === 'resume' ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <Play className="w-4 h-4" />
-              )}
-              Resume Mirror
-            </button>
+          {mirror.status?.toUpperCase() === 'PAUSED' && (
+            <>
+              <button
+                onClick={() => performAction('resume')}
+                disabled={actionLoading === 'resume'}
+                className="flex items-center gap-2 px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 disabled:opacity-50"
+              >
+                {actionLoading === 'resume' ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Play className="w-4 h-4" />
+                )}
+                Resume Mirror
+              </button>
+              <button
+                onClick={openTableEditor}
+                className="flex items-center gap-2 px-4 py-2 bg-cyan-100 text-cyan-700 rounded-lg hover:bg-cyan-200"
+              >
+                <Settings className="w-4 h-4" />
+                Edit Tables
+              </button>
+            </>
           )}
           <button
             onClick={() => performAction('retry')}
@@ -602,6 +717,130 @@ export default function MirrorDetailPage() {
                   <Trash2 className="w-4 h-4" />
                 )}
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Table Editor Modal */}
+      {showTableEditor && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Edit Table Mappings</h3>
+                <p className="text-sm text-gray-500 mt-1">Add or remove tables from this mirror while paused</p>
+              </div>
+              <button
+                onClick={() => setShowTableEditor(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto flex-1">
+              {tableEditorError && (
+                <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-500" />
+                  <span className="text-sm text-red-700">{tableEditorError}</span>
+                </div>
+              )}
+
+              <div className="space-y-4">
+                {tableMappings.map((mapping, index) => (
+                  <div key={index} className="bg-gray-50 rounded-lg p-4 border">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Source Schema</label>
+                          <input
+                            type="text"
+                            value={mapping.source_schema}
+                            onChange={(e) => updateTableMapping(index, 'source_schema', e.target.value)}
+                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono"
+                            placeholder="public"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Source Table</label>
+                          <input
+                            type="text"
+                            value={mapping.source_table}
+                            onChange={(e) => updateTableMapping(index, 'source_table', e.target.value)}
+                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono"
+                            placeholder="table_name"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Destination Schema</label>
+                          <input
+                            type="text"
+                            value={mapping.destination_schema}
+                            onChange={(e) => updateTableMapping(index, 'destination_schema', e.target.value)}
+                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono"
+                            placeholder="public"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Destination Table</label>
+                          <input
+                            type="text"
+                            value={mapping.destination_table}
+                            onChange={(e) => updateTableMapping(index, 'destination_table', e.target.value)}
+                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono"
+                            placeholder="table_name"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => removeTableMapping(index)}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg mt-5"
+                        title="Remove table"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                {tableMappings.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    <Table className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                    <p>No tables configured</p>
+                    <p className="text-sm mt-1">Add tables to replicate</p>
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={addTableMapping}
+                className="mt-4 flex items-center gap-2 px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200"
+              >
+                <Plus className="w-4 h-4" />
+                Add Table
+              </button>
+            </div>
+
+            <div className="p-6 border-t bg-gray-50 flex justify-end gap-3">
+              <button
+                onClick={() => setShowTableEditor(false)}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-200 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveTableMappings}
+                disabled={savingTables}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {savingTables ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4" />
+                )}
+                Save Changes
               </button>
             </div>
           </div>
