@@ -780,11 +780,17 @@ func (h *Handler) GetMirrorTables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get mirror config from database
+	// Get mirror config and publication name from database
 	var configJSON []byte
+	var publicationName string
+	var sourcePeerName string
 	err := h.CatalogPool.QueryRow(ctx, `
-		SELECT config FROM bunny_internal.mirrors WHERE name = $1
-	`, mirrorName).Scan(&configJSON)
+		SELECT m.config, COALESCE(ms.publication_name, ''), p.name
+		FROM bunny_internal.mirrors m
+		JOIN bunny_internal.peers p ON m.source_peer_id = p.id
+		LEFT JOIN bunny_internal.mirror_state ms ON m.name = ms.mirror_name
+		WHERE m.name = $1
+	`, mirrorName).Scan(&configJSON, &publicationName, &sourcePeerName)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "mirror not found")
 		return
@@ -797,22 +803,47 @@ func (h *Handler) GetMirrorTables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Also get current table sync status
+	// Get table sync status
+	syncStatusMap := make(map[string]TableStatusResponse)
 	rows, err := h.CatalogPool.Query(ctx, `
 		SELECT table_name, status, rows_synced, last_synced_at
 		FROM bunny_stats.table_sync_status
 		WHERE mirror_name = $1
 	`, mirrorName)
-	if err != nil {
-		slog.Warn("failed to query table status", slog.Any("error", err))
-	}
-
-	var tables []TableStatusResponse
-	if rows != nil {
+	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var ts TableStatusResponse
 			rows.Scan(&ts.TableName, &ts.Status, &ts.RowsSynced, &ts.LastSyncedAt)
+			syncStatusMap[ts.TableName] = ts
+		}
+	}
+
+	// Get tables from publication on source database
+	var tables []TableStatusResponse
+	if publicationName != "" && sourcePeerName != "" {
+		pubTables, err := h.getPublicationTables(ctx, sourcePeerName, publicationName)
+		if err != nil {
+			slog.Warn("failed to get publication tables", slog.Any("error", err))
+		} else {
+			for _, tableName := range pubTables {
+				if status, ok := syncStatusMap[tableName]; ok {
+					tables = append(tables, status)
+				} else {
+					// Table in publication but not yet synced
+					tables = append(tables, TableStatusResponse{
+						TableName:  tableName,
+						Status:     "PENDING",
+						RowsSynced: 0,
+					})
+				}
+			}
+		}
+	}
+
+	// If we couldn't get publication tables, fall back to sync status only
+	if len(tables) == 0 {
+		for _, ts := range syncStatusMap {
 			tables = append(tables, ts)
 		}
 	}
@@ -821,6 +852,52 @@ func (h *Handler) GetMirrorTables(w http.ResponseWriter, r *http.Request) {
 		"config": config,
 		"tables": tables,
 	})
+}
+
+// getPublicationTables queries the source database for tables in the publication
+func (h *Handler) getPublicationTables(ctx context.Context, peerName, publicationName string) ([]string, error) {
+	// Get peer connection info
+	var host, user, password, database, sslMode string
+	var port int
+	err := h.CatalogPool.QueryRow(ctx, `
+		SELECT host, port, username, password, database, ssl_mode
+		FROM bunny_internal.peers WHERE name = $1
+	`, peerName).Scan(&host, &port, &user, &password, &database, &sslMode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get peer config: %w", err)
+	}
+
+	// Connect to source database
+	connStr := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		user, password, host, port, database, sslMode)
+
+	pool, err := pgxpool.New(ctx, connStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to source: %w", err)
+	}
+	defer pool.Close()
+
+	// Query publication tables
+	rows, err := pool.Query(ctx, `
+		SELECT schemaname || '.' || tablename as table_name
+		FROM pg_publication_tables
+		WHERE pubname = $1
+		ORDER BY schemaname, tablename
+	`, publicationName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query publication tables: %w", err)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err == nil {
+			tables = append(tables, tableName)
+		}
+	}
+
+	return tables, nil
 }
 
 // UpdateMirrorTables updates the table mappings for a paused mirror

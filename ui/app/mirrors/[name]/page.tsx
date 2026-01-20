@@ -175,10 +175,21 @@ export default function MirrorDetailPage() {
       const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/tables`);
       if (res.ok) {
         const data = await res.json();
-        if (data.config?.table_mappings) {
+        if (data.config?.table_mappings && data.config.table_mappings.length > 0) {
           setTableMappings(data.config.table_mappings);
-        } else if (mirror?.tables) {
-          // Fallback: create mappings from table status
+        } else if (data.tables && data.tables.length > 0) {
+          // Create mappings from tables returned by API (from publication)
+          setTableMappings(data.tables.map((t: { table_name: string }) => {
+            const parts = t.table_name.split('.');
+            return {
+              source_schema: parts[0] || 'public',
+              source_table: parts[1] || t.table_name,
+              destination_schema: parts[0] || 'public',
+              destination_table: parts[1] || t.table_name,
+            };
+          }));
+        } else if (mirror?.tables && mirror.tables.length > 0) {
+          // Fallback: create mappings from mirror state
           setTableMappings(mirror.tables.map(t => {
             const parts = t.table_name.split('.');
             return {
