@@ -403,6 +403,9 @@ func (h *Handler) PauseMirror(w http.ResponseWriter, r *http.Request) {
 		WHERE mirror_name = $1
 	`, mirrorName)
 
+	// Log the action
+	h.WriteMirrorLog(ctx, mirrorName, "INFO", "User triggered: Pause Mirror", nil)
+
 	writeJSON(w, http.StatusOK, MirrorResponse{
 		Name:    mirrorName,
 		Status:  "PAUSING",
@@ -430,6 +433,9 @@ func (h *Handler) ResumeMirror(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to resume mirror: %v", err))
 		return
 	}
+
+	// Log the action
+	h.WriteMirrorLog(ctx, mirrorName, "INFO", "User triggered: Resume Mirror", nil)
 
 	writeJSON(w, http.StatusOK, MirrorResponse{
 		Name:    mirrorName,
@@ -558,6 +564,9 @@ func (h *Handler) ResyncMirror(w http.ResponseWriter, r *http.Request) {
 	message := "resync signal sent"
 	if tableName != "" {
 		message = fmt.Sprintf("table resync signal sent for %s", tableName)
+		h.WriteMirrorLog(ctx, mirrorName, "INFO", "User triggered: Resync Table", map[string]interface{}{"table": tableName})
+	} else {
+		h.WriteMirrorLog(ctx, mirrorName, "INFO", "User triggered: Full Resync", nil)
 	}
 
 	writeJSON(w, http.StatusOK, MirrorResponse{
@@ -600,6 +609,9 @@ func (h *Handler) RetryMirror(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("triggered immediate retry", slog.String("mirror", mirrorName))
+
+	// Log the action
+	h.WriteMirrorLog(ctx, mirrorName, "INFO", "User triggered: Retry Now", nil)
 
 	writeJSON(w, http.StatusOK, MirrorResponse{
 		Name:    mirrorName,
@@ -800,6 +812,9 @@ func (h *Handler) SyncSchema(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to trigger schema sync")
 		return
 	}
+
+	// Log the action
+	h.WriteMirrorLog(ctx, mirrorName, "INFO", "User triggered: Sync Schema", nil)
 
 	writeJSON(w, http.StatusOK, MirrorResponse{
 		Name:    mirrorName,
