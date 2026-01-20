@@ -376,10 +376,14 @@ func CDCFlowWorkflow(
 		return state, workflow.NewContinueAsNewError(ctx, CDCFlowWorkflow, input, state)
 
 	case model.SyncSchemaSignal:
-		// Run schema sync activity then continue
+		// Drop replication slot first to release the connection, then restart CDC
+		// This ensures clean restart without "slot is active" errors
 		state.ActiveSignal = model.NoopSignal
-		// Execute schema sync activity here
-		return state, workflow.NewContinueAsNewError(ctx, CDCFlowWorkflow, input, state)
+		return state, workflow.NewContinueAsNewError(ctx, DropFlowWorkflow, &DropFlowInput{
+			MirrorName: input.MirrorName,
+			IsResync:   true, // Restart CDC after dropping
+			Config:     input,
+		})
 	}
 
 	// Handle sync error with backoff
