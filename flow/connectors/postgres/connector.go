@@ -355,9 +355,28 @@ func (c *PostgresConnector) CreateReplicationSlot(
 	return result.SnapshotName, nil
 }
 
-// DropReplicationSlot drops a replication slot
+// DropReplicationSlot drops a replication slot, terminating any active connection first
 func (c *PostgresConnector) DropReplicationSlot(ctx context.Context, slotName string) error {
-	_, err := c.conn.Exec(ctx,
+	// First, terminate any active connection using this slot
+	_, err := c.conn.Exec(ctx, `
+		SELECT pg_terminate_backend(active_pid)
+		FROM pg_replication_slots
+		WHERE slot_name = $1 AND active_pid IS NOT NULL
+	`, slotName)
+	if err != nil {
+		c.logger.Warn("failed to terminate active slot connection", slog.String("slot", slotName), slog.Any("error", err))
+		// Continue anyway - the slot might not be active
+	}
+
+	// Small delay to allow connection to fully terminate
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	// Now drop the slot
+	_, err = c.conn.Exec(ctx,
 		"SELECT pg_drop_replication_slot($1)",
 		slotName,
 	)
