@@ -630,6 +630,44 @@ func (h *Handler) restartMirrorWorkflow(ctx context.Context, w http.ResponseWrit
 		}
 	}
 
+	// If no table mappings in config, get them from table_sync_status
+	if len(tableMappings) == 0 {
+		rows, err := h.CatalogPool.Query(ctx, `
+			SELECT table_name FROM bunny_stats.table_sync_status WHERE mirror_name = $1
+		`, mirrorName)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var tableName string
+				if err := rows.Scan(&tableName); err == nil {
+					// Parse schema.table format
+					parts := strings.SplitN(tableName, ".", 2)
+					schema := "public"
+					table := tableName
+					if len(parts) == 2 {
+						schema = parts[0]
+						table = parts[1]
+					}
+					tableMappings = append(tableMappings, model.TableMapping{
+						SourceSchema:      schema,
+						SourceTable:       table,
+						DestinationSchema: schema,
+						DestinationTable:  table,
+					})
+				}
+			}
+		}
+	}
+
+	if len(tableMappings) == 0 {
+		writeError(w, http.StatusBadRequest, "no table mappings found for mirror")
+		return
+	}
+
+	slog.Info("restarting mirror with table mappings",
+		slog.String("mirror", mirrorName),
+		slog.Int("tableCount", len(tableMappings)))
+
 	// Get last LSN and batch ID from mirror_state to resume from
 	var lastLSN int64
 	var lastBatchID int64
