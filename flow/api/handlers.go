@@ -1120,6 +1120,17 @@ func (h *Handler) UpdateMirrorTables(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("failed to update mirror config", slog.Any("error", err))
 	}
 
+	// Clean up table_sync_status entries for tables that were removed
+	// Delete entries that are not in the new table list
+	_, err = h.CatalogPool.Exec(ctx, `
+		DELETE FROM bunny_stats.table_sync_status
+		WHERE mirror_name = $1
+		AND table_name NOT IN (SELECT unnest($2::text[]))
+	`, mirrorName, tables)
+	if err != nil {
+		slog.Warn("failed to clean up old table sync status", slog.Any("error", err))
+	}
+
 	// Log the update
 	h.WriteMirrorLog(ctx, mirrorName, "INFO", "Tables updated", map[string]interface{}{
 		"table_count": len(req.TableMappings),
