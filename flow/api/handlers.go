@@ -1007,7 +1007,7 @@ func (h *Handler) UpdateMirrorTables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if mirror is paused
+	// Check if mirror is paused - first check database, then try Temporal workflow for live state
 	var status string
 	err := h.CatalogPool.QueryRow(ctx, `
 		SELECT status FROM bunny_internal.mirror_state WHERE mirror_name = $1
@@ -1015,6 +1015,16 @@ func (h *Handler) UpdateMirrorTables(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusNotFound, "mirror not found")
 		return
+	}
+
+	// Try to get live state from workflow (may override database status)
+	workflowID := fmt.Sprintf("cdc-%s", mirrorName)
+	resp, queryErr := h.TemporalClient.QueryWorkflow(ctx, workflowID, "", workflows.QueryFlowState)
+	if queryErr == nil {
+		var state model.CDCFlowState
+		if err := resp.Get(&state); err == nil {
+			status = string(state.Status)
+		}
 	}
 
 	if status != "PAUSED" {
