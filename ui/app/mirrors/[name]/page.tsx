@@ -124,18 +124,30 @@ export default function MirrorDetailPage() {
     }
   }, [mirrorName]);
 
+  const [actionError, setActionError] = useState<string | null>(null);
+
   const performAction = async (action: string, tableName?: string) => {
     const actionKey = tableName ? `${action}-${tableName}` : action;
     setActionLoading(actionKey);
+    setActionError(null);
     try {
       const url = tableName
         ? `${API_URL}/v1/mirrors/${mirrorName}/${action}/${tableName}`
         : `${API_URL}/v1/mirrors/${mirrorName}/${action}`;
       const res = await fetch(url, { method: 'POST' });
-      if (!res.ok) throw new Error(`Failed to ${action}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 409) {
+          // Operation already in progress
+          setActionError(data.error || 'An operation is already in progress. Please wait for it to complete.');
+          return;
+        }
+        throw new Error(data.error || `Failed to ${action}`);
+      }
       await fetchMirrorDetails();
     } catch (err) {
       console.error(`Failed to ${action}:`, err);
+      setActionError(err instanceof Error ? err.message : `Failed to ${action}`);
     } finally {
       setActionLoading(null);
     }
@@ -482,6 +494,18 @@ export default function MirrorDetailPage() {
       {/* Actions */}
       <div className="bg-white rounded-lg shadow p-4">
         <h2 className="text-sm font-medium text-gray-500 mb-3">Actions</h2>
+        {actionError && (
+          <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <span className="text-sm text-amber-800">{actionError}</span>
+            <button
+              onClick={() => setActionError(null)}
+              className="ml-auto text-amber-600 hover:text-amber-800"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           {!['PAUSED', 'PAUSING', 'TERMINATED', 'TERMINATING', 'FAILED'].includes(mirror.status?.toUpperCase()) && (
             <button

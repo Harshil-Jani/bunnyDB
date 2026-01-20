@@ -508,6 +508,24 @@ func (h *Handler) ResyncMirror(w http.ResponseWriter, r *http.Request) {
 
 	workflowID := fmt.Sprintf("cdc-%s", mirrorName)
 
+	// Check if workflow already has an active signal pending
+	resp, err := h.TemporalClient.QueryWorkflow(ctx, workflowID, "", workflows.QueryFlowState)
+	if err == nil {
+		var state model.CDCFlowState
+		if err := resp.Get(&state); err == nil {
+			// Check if there's already an active signal (not NoopSignal)
+			if state.ActiveSignal != model.NoopSignal {
+				writeError(w, http.StatusConflict, fmt.Sprintf("operation already in progress: %s", state.ActiveSignal.String()))
+				return
+			}
+			// Also check if status indicates an operation is in progress
+			if state.Status == model.MirrorStatusResyncing || state.Status == model.MirrorStatusSnapshot {
+				writeError(w, http.StatusConflict, fmt.Sprintf("mirror is busy: %s", state.Status))
+				return
+			}
+		}
+	}
+
 	var signalName string
 	var payload model.SignalPayload
 
@@ -530,7 +548,7 @@ func (h *Handler) ResyncMirror(w http.ResponseWriter, r *http.Request) {
 		slog.Info("triggering full resync", slog.String("mirror", mirrorName))
 	}
 
-	err := h.TemporalClient.SignalWorkflow(ctx, workflowID, "", signalName, payload)
+	err = h.TemporalClient.SignalWorkflow(ctx, workflowID, "", signalName, payload)
 	if err != nil {
 		slog.Error("failed to signal workflow", slog.Any("error", err))
 		writeError(w, http.StatusInternalServerError, "failed to trigger resync")
@@ -756,7 +774,25 @@ func (h *Handler) SyncSchema(w http.ResponseWriter, r *http.Request) {
 
 	workflowID := fmt.Sprintf("cdc-%s", mirrorName)
 
-	err := h.TemporalClient.SignalWorkflow(ctx, workflowID, "", workflows.SignalSyncSchema, model.SignalPayload{
+	// Check if workflow already has an active signal pending
+	resp, err := h.TemporalClient.QueryWorkflow(ctx, workflowID, "", workflows.QueryFlowState)
+	if err == nil {
+		var state model.CDCFlowState
+		if err := resp.Get(&state); err == nil {
+			// Check if there's already an active signal (not NoopSignal)
+			if state.ActiveSignal != model.NoopSignal {
+				writeError(w, http.StatusConflict, fmt.Sprintf("operation already in progress: %s", state.ActiveSignal.String()))
+				return
+			}
+			// Also check if status indicates an operation is in progress
+			if state.Status == model.MirrorStatusResyncing || state.Status == model.MirrorStatusSnapshot {
+				writeError(w, http.StatusConflict, fmt.Sprintf("mirror is busy: %s", state.Status))
+				return
+			}
+		}
+	}
+
+	err = h.TemporalClient.SignalWorkflow(ctx, workflowID, "", workflows.SignalSyncSchema, model.SignalPayload{
 		Signal: model.SyncSchemaSignal,
 	})
 	if err != nil {
