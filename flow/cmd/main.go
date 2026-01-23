@@ -138,6 +138,7 @@ func runWorker(config *shared.Config, catalogPool *pgxpool.Pool, temporalClient 
 	w.RegisterActivity(acts.StartSnapshotSession)
 	w.RegisterActivity(acts.HoldSnapshotSession)
 	w.RegisterActivity(acts.EndSnapshotSession)
+	w.RegisterActivity(acts.SyncSchema)
 
 	// Graceful shutdown
 	go func() {

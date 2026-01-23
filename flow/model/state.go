@@ -15,7 +15,8 @@ const (
 	MirrorStatusFailed      MirrorStatus = "FAILED"
 	MirrorStatusTerminating MirrorStatus = "TERMINATING"
 	MirrorStatusTerminated  MirrorStatus = "TERMINATED"
-	MirrorStatusResyncing   MirrorStatus = "RESYNCING"
+	MirrorStatusResyncing      MirrorStatus = "RESYNCING"
+	MirrorStatusSyncingSchema  MirrorStatus = "SYNCING_SCHEMA"
 )
 
 // CDCFlowState represents the state of a CDC workflow
@@ -107,6 +108,13 @@ func (s *CDCFlowState) UpdateStatus(status MirrorStatus) {
 func (s *CDCFlowState) RecordError(errMsg string) {
 	s.ErrorMessage = errMsg
 	s.ErrorCount++
+	s.LastErrorAt = time.Now()
+	s.UpdatedAt = time.Now()
+}
+
+// SetError sets an error message without incrementing the error count
+func (s *CDCFlowState) SetError(errMsg string) {
+	s.ErrorMessage = errMsg
 	s.LastErrorAt = time.Now()
 	s.UpdatedAt = time.Now()
 }

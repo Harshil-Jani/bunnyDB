@@ -42,6 +42,7 @@ const (
 	DropDestinationTablesActivity    = "DropDestinationTables"
 	GetPartitionInfoActivity         = "GetPartitionInfo"
 	CopyPartitionActivity            = "CopyPartition"
+	SyncSchemaActivity               = "SyncSchema"
 )
 
 // Activities holds the activity implementations
@@ -1586,4 +1587,145 @@ func (a *Activities) CopyPartition(ctx context.Context, input *CopyPartitionInpu
 		slog.Int("totalPartitions", int(input.TotalPartitions)),
 		slog.Int("rowCount", rowCount))
 	return nil
+}
+
+// ============================================================================
+// Schema Sync Activity
+// ============================================================================
+
+// SyncSchemaInput is the input for the SyncSchema activity
+type SyncSchemaInput struct {
+	MirrorName      string
+	SourcePeer      string
+	DestinationPeer string
+	TableMappings   []model.TableMapping
+	ReplicateIndexes bool
+}
+
+// SyncSchemaOutput is the output of the SyncSchema activity
+type SyncSchemaOutput struct {
+	TablesModified int
+	ColumnsAdded   int
+	IndexesAdded   int
+}
+
+// SyncSchema compares source and destination schemas and applies differences
+func (a *Activities) SyncSchema(ctx context.Context, input *SyncSchemaInput) (*SyncSchemaOutput, error) {
+	logger := slog.Default().With(slog.String("mirror", input.MirrorName))
+	logger.Info("starting schema sync", slog.Int("tables", len(input.TableMappings)))
+
+	a.WriteLog(ctx, input.MirrorName, "INFO", "Starting schema sync", map[string]interface{}{
+		"table_count": len(input.TableMappings),
+	})
+
+	srcConfig, err := a.getPeerConfig(ctx, input.SourcePeer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get source peer config: %w", err)
+	}
+
+	dstConfig, err := a.getPeerConfig(ctx, input.DestinationPeer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to source: %w", err)
+	}
+	defer srcConn.Close()
+
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	output := &SyncSchemaOutput{}
+
+	for _, tm := range input.TableMappings {
+		activity.RecordHeartbeat(ctx, fmt.Sprintf("syncing schema for %s", tm.FullSourceName()))
+
+		// Get source schema
+		srcSchema, err := srcConn.GetTableSchema(ctx, tm.SourceSchema, tm.SourceTable)
+		if err != nil {
+			a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to get source schema", map[string]interface{}{
+				"table": tm.FullSourceName(),
+				"error": err.Error(),
+			})
+			return nil, fmt.Errorf("failed to get source schema for %s: %w", tm.FullSourceName(), err)
+		}
+
+		// Get destination schema
+		dstSchema, err := dstConn.GetTableSchema(ctx, tm.DestinationSchema, tm.DestinationTable)
+		if err != nil {
+			a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to get destination schema", map[string]interface{}{
+				"table": tm.FullDestinationName(),
+				"error": err.Error(),
+			})
+			return nil, fmt.Errorf("failed to get destination schema for %s: %w", tm.FullDestinationName(), err)
+		}
+
+		// Compare schemas
+		delta := postgres.CompareSchemas(srcSchema, dstSchema)
+
+		// Compare indexes if enabled
+		if input.ReplicateIndexes {
+			srcIndexes, err := srcConn.GetIndexes(ctx, tm.SourceSchema, tm.SourceTable)
+			if err != nil {
+				logger.Warn("failed to get source indexes", slog.Any("error", err), slog.String("table", tm.FullSourceName()))
+			} else {
+				dstIndexes, err := dstConn.GetIndexes(ctx, tm.DestinationSchema, tm.DestinationTable)
+				if err != nil {
+					logger.Warn("failed to get destination indexes", slog.Any("error", err), slog.String("table", tm.FullDestinationName()))
+				} else {
+					added, _ := postgres.CompareIndexes(srcIndexes, dstIndexes)
+					for _, idx := range added {
+						delta.AddedIndexes = append(delta.AddedIndexes, postgres.IndexDefinition{
+							Name:       idx.Name,
+							Definition: idx.Definition,
+						})
+					}
+				}
+			}
+		}
+
+		if !delta.HasChanges() {
+			logger.Info("no schema changes for table", slog.String("table", tm.FullSourceName()))
+			continue
+		}
+
+		// Apply changes
+		output.TablesModified++
+		output.ColumnsAdded += len(delta.AddedColumns)
+		output.IndexesAdded += len(delta.AddedIndexes)
+
+		a.WriteLog(ctx, input.MirrorName, "INFO", "Applying schema changes", map[string]interface{}{
+			"table":           tm.FullSourceName(),
+			"columns_added":   len(delta.AddedColumns),
+			"columns_dropped": len(delta.DroppedColumns),
+			"indexes_added":   len(delta.AddedIndexes),
+			"type_changes":    len(delta.TypeChanges),
+		})
+
+		if err := dstConn.ApplySchemaDelta(ctx, delta); err != nil {
+			a.WriteLog(ctx, input.MirrorName, "ERROR", "Failed to apply schema changes", map[string]interface{}{
+				"table": tm.FullSourceName(),
+				"error": err.Error(),
+			})
+			return nil, fmt.Errorf("failed to apply schema delta for %s: %w", tm.FullSourceName(), err)
+		}
+
+		logger.Info("schema sync applied",
+			slog.String("table", tm.FullSourceName()),
+			slog.Int("columnsAdded", len(delta.AddedColumns)),
+			slog.Int("indexesAdded", len(delta.AddedIndexes)))
+	}
+
+	a.WriteLog(ctx, input.MirrorName, "INFO", "Schema sync completed", map[string]interface{}{
+		"tables_modified": output.TablesModified,
+		"columns_added":   output.ColumnsAdded,
+		"indexes_added":   output.IndexesAdded,
+	})
+
+	return output, nil
 }

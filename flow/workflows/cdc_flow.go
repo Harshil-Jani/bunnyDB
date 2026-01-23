@@ -382,12 +382,36 @@ func CDCFlowWorkflow(
 		})
 
 	case model.SyncSchemaSignal:
-		// Drop replication slot first to release the connection, then restart CDC
-		// This ensures clean restart without "slot is active" errors
+		// First run schema sync activity to compare and apply DDL changes
 		state.ActiveSignal = model.NoopSignal
+		state.UpdateStatus(model.MirrorStatusSyncingSchema)
+
+		syncSchemaCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: 30 * time.Minute,
+			HeartbeatTimeout:    5 * time.Minute,
+			RetryPolicy: &temporal.RetryPolicy{
+				InitialInterval: 30 * time.Second,
+				MaximumAttempts: 3,
+			},
+		})
+
+		var syncOutput activities.SyncSchemaOutput
+		err := workflow.ExecuteActivity(syncSchemaCtx, activities.SyncSchemaActivity, &activities.SyncSchemaInput{
+			MirrorName:       input.MirrorName,
+			SourcePeer:       input.SourcePeer,
+			DestinationPeer:  input.DestinationPeer,
+			TableMappings:    input.TableMappings,
+			ReplicateIndexes: input.ReplicateIndexes,
+		}).Get(ctx, &syncOutput)
+		if err != nil {
+			logger.Error("schema sync activity failed", slog.Any("error", err))
+			state.SetError(fmt.Sprintf("schema sync failed: %v", err))
+		}
+
+		// Drop replication slot and restart CDC to pick up new columns
 		return state, workflow.NewContinueAsNewError(ctx, DropFlowWorkflow, &DropFlowInput{
 			MirrorName: input.MirrorName,
-			IsResync:   true, // Restart CDC after dropping
+			IsResync:   true,
 			Config:     input,
 		})
 	}
