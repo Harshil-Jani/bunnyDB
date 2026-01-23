@@ -43,6 +43,9 @@ const (
 	GetPartitionInfoActivity         = "GetPartitionInfo"
 	CopyPartitionActivity            = "CopyPartition"
 	SyncSchemaActivity               = "SyncSchema"
+	CreateResyncTableActivity        = "CreateResyncTable"
+	SwapTablesActivity               = "SwapTables"
+	DropResyncTableActivity          = "DropResyncTable"
 )
 
 // Activities holds the activity implementations
@@ -1741,4 +1744,255 @@ func (a *Activities) SyncSchema(ctx context.Context, input *SyncSchemaInput) (*S
 	})
 
 	return output, nil
+}
+
+// ============================================================================
+// Swap Resync Activities
+// ============================================================================
+
+// CreateResyncTableInput is the input for CreateResyncTable
+type CreateResyncTableInput struct {
+	MirrorName      string
+	SourcePeer      string
+	DestinationPeer string
+	TableMapping    model.TableMapping
+}
+
+// CreateResyncTable creates a _resync shadow table with the same structure as the source
+func (a *Activities) CreateResyncTable(ctx context.Context, input *CreateResyncTableInput) error {
+	logger := slog.Default().With(
+		slog.String("mirror", input.MirrorName),
+		slog.String("table", input.TableMapping.FullSourceName()))
+	logger.Info("creating resync table")
+
+	srcConfig, err := a.getPeerConfig(ctx, input.SourcePeer)
+	if err != nil {
+		return fmt.Errorf("failed to get source peer config: %w", err)
+	}
+
+	dstConfig, err := a.getPeerConfig(ctx, input.DestinationPeer)
+	if err != nil {
+		return fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to source: %w", err)
+	}
+	defer srcConn.Close()
+
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	// Get source table schema
+	srcSchema, err := srcConn.GetTableSchema(ctx, input.TableMapping.SourceSchema, input.TableMapping.SourceTable)
+	if err != nil {
+		return fmt.Errorf("failed to get source schema: %w", err)
+	}
+
+	resyncTableName := input.TableMapping.DestinationTable + "_resync"
+
+	// Drop existing resync table if any
+	dropQuery := fmt.Sprintf("DROP TABLE IF EXISTS %s.%s CASCADE",
+		postgres.QuoteIdentifier(input.TableMapping.DestinationSchema),
+		postgres.QuoteIdentifier(resyncTableName))
+	if _, err := dstConn.Conn().Exec(ctx, dropQuery); err != nil {
+		return fmt.Errorf("failed to drop existing resync table: %w", err)
+	}
+
+	// Ensure destination schema exists
+	if err := dstConn.EnsureSchemaExists(ctx, input.TableMapping.DestinationSchema); err != nil {
+		return fmt.Errorf("failed to ensure schema exists: %w", err)
+	}
+
+	// Create the resync table with source schema
+	if err := dstConn.CreateTableFromSchema(ctx, srcSchema, input.TableMapping.DestinationSchema, resyncTableName); err != nil {
+		return fmt.Errorf("failed to create resync table: %w", err)
+	}
+
+	a.WriteLog(ctx, input.MirrorName, "INFO", "Created resync table", map[string]interface{}{
+		"table":        input.TableMapping.FullDestinationName(),
+		"resync_table": input.TableMapping.DestinationSchema + "." + resyncTableName,
+	})
+
+	logger.Info("resync table created", slog.String("resync_table", resyncTableName))
+	return nil
+}
+
+// SwapTablesInput is the input for SwapTables
+type SwapTablesInput struct {
+	MirrorName      string
+	SourcePeer      string
+	DestinationPeer string
+	TableMapping    model.TableMapping
+	RecreateFKs     bool
+}
+
+// SwapTables atomically swaps a _resync table into place of the original
+func (a *Activities) SwapTables(ctx context.Context, input *SwapTablesInput) error {
+	logger := slog.Default().With(
+		slog.String("mirror", input.MirrorName),
+		slog.String("table", input.TableMapping.FullDestinationName()))
+	logger.Info("swapping resync table into place")
+
+	dstConfig, err := a.getPeerConfig(ctx, input.DestinationPeer)
+	if err != nil {
+		return fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	schema := input.TableMapping.DestinationSchema
+	table := input.TableMapping.DestinationTable
+	resyncTable := table + "_resync"
+	oldTable := table + "_old"
+	fullTableName := schema + "." + table
+
+	// Execute swap in a single transaction
+	tx, err := dstConn.Conn().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Step 1: Drop all FKs referencing the original table
+	fkRows, err := tx.Query(ctx, `
+		SELECT
+			tc.table_schema,
+			tc.table_name,
+			tc.constraint_name
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.constraint_column_usage ccu
+			ON tc.constraint_name = ccu.constraint_name
+			AND tc.constraint_schema = ccu.constraint_schema
+		WHERE tc.constraint_type = 'FOREIGN KEY'
+			AND (ccu.table_schema || '.' || ccu.table_name = $1
+				OR tc.table_schema || '.' || tc.table_name = $1)
+	`, fullTableName)
+	if err != nil {
+		return fmt.Errorf("failed to query foreign keys: %w", err)
+	}
+
+	type fkInfo struct{ schema, table, constraint string }
+	var fksToRecreate []fkInfo
+	for fkRows.Next() {
+		var fk fkInfo
+		if err := fkRows.Scan(&fk.schema, &fk.table, &fk.constraint); err != nil {
+			continue
+		}
+		fksToRecreate = append(fksToRecreate, fk)
+	}
+	fkRows.Close()
+
+	for _, fk := range fksToRecreate {
+		dropFK := fmt.Sprintf("ALTER TABLE %s.%s DROP CONSTRAINT IF EXISTS %s",
+			postgres.QuoteIdentifier(fk.schema),
+			postgres.QuoteIdentifier(fk.table),
+			postgres.QuoteIdentifier(fk.constraint))
+		if _, err := tx.Exec(ctx, dropFK); err != nil {
+			logger.Warn("failed to drop FK during swap", slog.String("constraint", fk.constraint), slog.Any("error", err))
+		}
+	}
+
+	// Step 2: Rename original to _old
+	renameOld := fmt.Sprintf("ALTER TABLE %s.%s RENAME TO %s",
+		postgres.QuoteIdentifier(schema),
+		postgres.QuoteIdentifier(table),
+		postgres.QuoteIdentifier(oldTable))
+	if _, err := tx.Exec(ctx, renameOld); err != nil {
+		return fmt.Errorf("failed to rename original table to _old: %w", err)
+	}
+
+	// Step 3: Rename _resync to original
+	renameNew := fmt.Sprintf("ALTER TABLE %s.%s RENAME TO %s",
+		postgres.QuoteIdentifier(schema),
+		postgres.QuoteIdentifier(resyncTable),
+		postgres.QuoteIdentifier(table))
+	if _, err := tx.Exec(ctx, renameNew); err != nil {
+		return fmt.Errorf("failed to rename resync table to original: %w", err)
+	}
+
+	// Step 4: Drop old table
+	dropOld := fmt.Sprintf("DROP TABLE IF EXISTS %s.%s CASCADE",
+		postgres.QuoteIdentifier(schema),
+		postgres.QuoteIdentifier(oldTable))
+	if _, err := tx.Exec(ctx, dropOld); err != nil {
+		logger.Warn("failed to drop old table", slog.Any("error", err))
+	}
+
+	// Commit the swap
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit swap transaction: %w", err)
+	}
+
+	// Step 5: Recreate FKs outside the transaction (they reference source for definition)
+	if input.RecreateFKs && input.SourcePeer != "" {
+		srcConfig, err := a.getPeerConfig(ctx, input.SourcePeer)
+		if err != nil {
+			logger.Warn("failed to get source config for FK recreation", slog.Any("error", err))
+		} else {
+			srcConn, err := postgres.NewPostgresConnector(ctx, srcConfig)
+			if err != nil {
+				logger.Warn("failed to connect to source for FK recreation", slog.Any("error", err))
+			} else {
+				defer srcConn.Close()
+				fkReplicator := postgres.NewFKReplicator(srcConn, dstConn)
+				if err := fkReplicator.ReplicateFKsFromSource(ctx, []string{fullTableName}, true); err != nil {
+					logger.Warn("failed to recreate FKs after swap", slog.Any("error", err))
+				}
+			}
+		}
+	}
+
+	a.WriteLog(ctx, input.MirrorName, "INFO", "Table swap completed", map[string]interface{}{
+		"table": fullTableName,
+	})
+
+	logger.Info("swap completed successfully")
+	return nil
+}
+
+// DropResyncTableInput is the input for DropResyncTable
+type DropResyncTableInput struct {
+	MirrorName      string
+	DestinationPeer string
+	TableMapping    model.TableMapping
+}
+
+// DropResyncTable cleans up a _resync shadow table (used on failure)
+func (a *Activities) DropResyncTable(ctx context.Context, input *DropResyncTableInput) error {
+	logger := slog.Default().With(
+		slog.String("mirror", input.MirrorName),
+		slog.String("table", input.TableMapping.FullDestinationName()))
+	logger.Info("dropping resync table (cleanup)")
+
+	dstConfig, err := a.getPeerConfig(ctx, input.DestinationPeer)
+	if err != nil {
+		return fmt.Errorf("failed to get destination peer config: %w", err)
+	}
+
+	dstConn, err := postgres.NewPostgresConnector(ctx, dstConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to destination: %w", err)
+	}
+	defer dstConn.Close()
+
+	resyncTableName := input.TableMapping.DestinationTable + "_resync"
+	dropQuery := fmt.Sprintf("DROP TABLE IF EXISTS %s.%s CASCADE",
+		postgres.QuoteIdentifier(input.TableMapping.DestinationSchema),
+		postgres.QuoteIdentifier(resyncTableName))
+
+	if _, err := dstConn.Conn().Exec(ctx, dropQuery); err != nil {
+		return fmt.Errorf("failed to drop resync table: %w", err)
+	}
+
+	logger.Info("resync table dropped", slog.String("resync_table", resyncTableName))
+	return nil
 }

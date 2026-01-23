@@ -115,6 +115,7 @@ func runWorker(config *shared.Config, catalogPool *pgxpool.Pool, temporalClient 
 	w.RegisterWorkflow(workflows.CloneTableWorkflow)
 	w.RegisterWorkflow(workflows.TableResyncWorkflow)
 	w.RegisterWorkflow(workflows.DropFlowWorkflow)
+	w.RegisterWorkflow(workflows.FullSwapResyncWorkflow)
 
 	// Register activities
 	acts := activities.NewActivities(catalogPool, config)
@@ -139,6 +140,9 @@ func runWorker(config *shared.Config, catalogPool *pgxpool.Pool, temporalClient 
 	w.RegisterActivity(acts.HoldSnapshotSession)
 	w.RegisterActivity(acts.EndSnapshotSession)
 	w.RegisterActivity(acts.SyncSchema)
+	w.RegisterActivity(acts.CreateResyncTable)
+	w.RegisterActivity(acts.SwapTables)
+	w.RegisterActivity(acts.DropResyncTable)
 
 	// Graceful shutdown
 	go func() {

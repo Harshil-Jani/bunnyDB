@@ -45,6 +45,9 @@ type CDCFlowInput struct {
 	// Schema replication options
 	ReplicateIndexes     bool
 	ReplicateForeignKeys bool
+
+	// Resync strategy: "truncate" (default) or "swap" (zero-downtime)
+	ResyncStrategy model.ResyncStrategy
 }
 
 // CDCFlowWorkflow is the main CDC replication workflow
@@ -130,6 +133,15 @@ func CDCFlowWorkflow(
 		}
 
 		if state.ActiveSignal == model.ResyncSignal {
+			if input.ResyncStrategy == model.ResyncStrategySwap {
+				return state, workflow.NewContinueAsNewError(ctx, FullSwapResyncWorkflow, &FullSwapResyncInput{
+					MirrorName:      input.MirrorName,
+					SourcePeer:      input.SourcePeer,
+					DestinationPeer: input.DestinationPeer,
+					TableMappings:   input.TableMappings,
+					CDCInput:        input,
+				})
+			}
 			return state, workflow.NewContinueAsNewError(ctx, DropFlowWorkflow, &DropFlowInput{
 				MirrorName: input.MirrorName,
 				IsResync:   true,
@@ -349,6 +361,15 @@ func CDCFlowWorkflow(
 		})
 
 	case model.ResyncSignal:
+		if input.ResyncStrategy == model.ResyncStrategySwap {
+			return state, workflow.NewContinueAsNewError(ctx, FullSwapResyncWorkflow, &FullSwapResyncInput{
+				MirrorName:      input.MirrorName,
+				SourcePeer:      input.SourcePeer,
+				DestinationPeer: input.DestinationPeer,
+				TableMappings:   input.TableMappings,
+				CDCInput:        input,
+			})
+		}
 		return state, workflow.NewContinueAsNewError(ctx, DropFlowWorkflow, &DropFlowInput{
 			MirrorName: input.MirrorName,
 			IsResync:   true,

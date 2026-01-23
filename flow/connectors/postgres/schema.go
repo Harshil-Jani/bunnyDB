@@ -322,6 +322,11 @@ func (c *PostgresConnector) ApplySchemaDelta(ctx context.Context, delta *SchemaD
 }
 
 func quoteIdentifier(name string) string {
+	return QuoteIdentifier(name)
+}
+
+// QuoteIdentifier quotes a PostgreSQL identifier to prevent SQL injection
+func QuoteIdentifier(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 

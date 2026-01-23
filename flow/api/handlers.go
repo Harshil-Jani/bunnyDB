@@ -55,6 +55,9 @@ type CreateMirrorRequest struct {
 
 	ReplicateIndexes     bool `json:"replicate_indexes"`
 	ReplicateForeignKeys bool `json:"replicate_foreign_keys"`
+
+	// ResyncStrategy: "truncate" (default) or "swap" (zero-downtime)
+	ResyncStrategy string `json:"resync_strategy,omitempty"`
 }
 
 // TableMappingInput is the input for table mapping
@@ -155,6 +158,12 @@ func (h *Handler) CreateMirror(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate resync strategy
+	if req.ResyncStrategy != "" && req.ResyncStrategy != "truncate" && req.ResyncStrategy != "swap" {
+		writeError(w, http.StatusBadRequest, "resync_strategy must be 'truncate' or 'swap'")
+		return
+	}
+
 	// Set defaults
 	if req.MaxBatchSize == 0 {
 		req.MaxBatchSize = 1000
@@ -199,6 +208,7 @@ func (h *Handler) CreateMirror(w http.ResponseWriter, r *http.Request) {
 		"snapshot_num_tables_in_parallel": req.SnapshotNumTablesInParallel,
 		"replicate_indexes":               req.ReplicateIndexes,
 		"replicate_foreign_keys":          req.ReplicateForeignKeys,
+		"resync_strategy":                 req.ResyncStrategy,
 	})
 
 	_, err = h.CatalogPool.Exec(ctx, `
@@ -238,6 +248,12 @@ func (h *Handler) CreateMirror(w http.ResponseWriter, r *http.Request) {
 		TaskQueue: h.Config.WorkerTaskQueue,
 	}
 
+	// Determine resync strategy
+	resyncStrategy := model.ResyncStrategyTruncate
+	if req.ResyncStrategy == "swap" {
+		resyncStrategy = model.ResyncStrategySwap
+	}
+
 	input := &workflows.CDCFlowInput{
 		MirrorName:                    req.Name,
 		SourcePeer:                    req.SourcePeer,
@@ -251,6 +267,7 @@ func (h *Handler) CreateMirror(w http.ResponseWriter, r *http.Request) {
 		SnapshotNumTablesInParallel:   req.SnapshotNumTablesInParallel,
 		ReplicateIndexes:              req.ReplicateIndexes,
 		ReplicateForeignKeys:          req.ReplicateForeignKeys,
+		ResyncStrategy:                resyncStrategy,
 	}
 
 	we, err := h.TemporalClient.ExecuteWorkflow(ctx, workflowOptions, workflows.CDCFlowWorkflow, input, nil)

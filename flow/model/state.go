@@ -19,6 +19,16 @@ const (
 	MirrorStatusSyncingSchema  MirrorStatus = "SYNCING_SCHEMA"
 )
 
+// ResyncStrategy represents the strategy used when resyncing tables
+type ResyncStrategy string
+
+const (
+	// ResyncStrategyTruncate truncates destination tables and re-copies data (has downtime)
+	ResyncStrategyTruncate ResyncStrategy = "truncate"
+	// ResyncStrategySwap creates _resync copies, populates them, then atomically swaps (zero-downtime)
+	ResyncStrategySwap     ResyncStrategy = "swap"
+)
+
 // CDCFlowState represents the state of a CDC workflow
 type CDCFlowState struct {
 	MirrorName string
