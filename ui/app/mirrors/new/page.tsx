@@ -263,18 +263,18 @@ export default function NewMirrorPage() {
       <div className="flex items-center gap-4">
         <button
           onClick={() => router.push('/')}
-          className="p-2 hover:bg-gray-100 rounded-lg"
+          className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="text-2xl font-bold text-gray-900">Create Mirror</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Create Mirror</h1>
       </div>
 
       {peers.length === 0 ? (
-        <div className="bg-white rounded-lg shadow p-8 text-center">
-          <Database className="w-12 h-12 mx-auto text-gray-400 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No peers configured</h3>
-          <p className="text-gray-500 mb-4">You need to add at least two peer connections before creating a mirror.</p>
+        <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-8 text-center">
+          <Database className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No peers configured</h3>
+          <p className="text-gray-500 dark:text-gray-400 mb-4">You need to add at least two peer connections before creating a mirror.</p>
           <button
             onClick={() => router.push('/peers')}
             className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
@@ -283,10 +283,10 @@ export default function NewMirrorPage() {
           </button>
         </div>
       ) : peers.length < 2 ? (
-        <div className="bg-white rounded-lg shadow p-8 text-center">
-          <Database className="w-12 h-12 mx-auto text-gray-400 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Need more peers</h3>
-          <p className="text-gray-500 mb-4">You need at least two peer connections to create a mirror.</p>
+        <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-8 text-center">
+          <Database className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Need more peers</h3>
+          <p className="text-gray-500 dark:text-gray-400 mb-4">You need at least two peer connections to create a mirror.</p>
           <button
             onClick={() => router.push('/peers')}
             className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
@@ -297,21 +297,21 @@ export default function NewMirrorPage() {
       ) : (
         <form onSubmit={createMirror} className="space-y-6">
           {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400">
               {error}
             </div>
           )}
 
           {/* Mirror Name */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Mirror Configuration</h2>
+          <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-6">
+            <h2 className="text-lg font-semibold mb-4 dark:text-white">Mirror Configuration</h2>
             <div>
-              <label className="block text-sm font-medium text-gray-700">Mirror Name</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Mirror Name</label>
               <input
                 type="text"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="mt-1 block w-full max-w-md rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
+                className="mt-1 block w-full max-w-md rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 dark:bg-gray-800 dark:text-white"
                 placeholder="my-replication-mirror"
                 required
               />
@@ -319,15 +319,15 @@ export default function NewMirrorPage() {
           </div>
 
           {/* Peer Selection */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Source & Destination</h2>
+          <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-6">
+            <h2 className="text-lg font-semibold mb-4 dark:text-white">Source & Destination</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
               <div>
-                <label className="block text-sm font-medium text-gray-700">Source Peer</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Source Peer</label>
                 <select
                   value={formData.source_peer}
                   onChange={(e) => setFormData({ ...formData, source_peer: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
+                  className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 dark:bg-gray-800 dark:text-white"
                   required
                 >
                   <option value="">Select source...</option>
@@ -338,22 +338,22 @@ export default function NewMirrorPage() {
                   ))}
                 </select>
                 {sourcePeer && (
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     {sourcePeer.user}@{sourcePeer.host}:{sourcePeer.port}
                   </p>
                 )}
               </div>
 
               <div className="flex justify-center">
-                <ArrowRight className="w-8 h-8 text-gray-400" />
+                <ArrowRight className="w-8 h-8 text-gray-400 dark:text-gray-500" />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700">Destination Peer</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Destination Peer</label>
                 <select
                   value={formData.destination_peer}
                   onChange={(e) => setFormData({ ...formData, destination_peer: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
+                  className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 dark:bg-gray-800 dark:text-white"
                   required
                 >
                   <option value="">Select destination...</option>
@@ -364,7 +364,7 @@ export default function NewMirrorPage() {
                   ))}
                 </select>
                 {destPeer && (
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     {destPeer.user}@{destPeer.host}:{destPeer.port}
                   </p>
                 )}
@@ -373,14 +373,14 @@ export default function NewMirrorPage() {
           </div>
 
           {/* Table Selection */}
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold">Select Tables</h2>
+              <h2 className="text-lg font-semibold dark:text-white">Select Tables</h2>
               {formData.source_peer && (
                 <button
                   type="button"
                   onClick={() => fetchSourceTables(formData.source_peer)}
-                  className="flex items-center gap-1 px-3 py-1.5 text-gray-600 hover:bg-gray-100 rounded"
+                  className="flex items-center gap-1 px-3 py-1.5 text-gray-600 hover:bg-gray-100 rounded dark:text-gray-300 dark:hover:bg-gray-800"
                 >
                   <RefreshCw className={`w-4 h-4 ${loadingTables ? 'animate-spin' : ''}`} />
                   Refresh
@@ -389,16 +389,16 @@ export default function NewMirrorPage() {
             </div>
 
             {!formData.source_peer ? (
-              <div className="text-center py-8 text-gray-500">
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
                 Select a source peer to load available tables
               </div>
             ) : loadingTables ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
-                <span className="ml-2 text-gray-500">Loading tables...</span>
+                <span className="ml-2 text-gray-500 dark:text-gray-400">Loading tables...</span>
               </div>
             ) : sourceTables.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
                 No tables found in the source database
               </div>
             ) : (
@@ -412,13 +412,13 @@ export default function NewMirrorPage() {
                       value={tableSearch}
                       onChange={(e) => setTableSearch(e.target.value)}
                       placeholder="Search tables..."
-                      className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
                     />
                   </div>
                   <button
                     type="button"
                     onClick={toggleAllFiltered}
-                    className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                    className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
                   >
                     {allFilteredSelected ? (
                       <CheckSquare className="w-4 h-4" />
@@ -430,43 +430,43 @@ export default function NewMirrorPage() {
                 </div>
 
                 {/* Selected count */}
-                <div className="mb-4 text-sm text-gray-600">
+                <div className="mb-4 text-sm text-gray-600 dark:text-gray-300">
                   {selectedTables.size} of {sourceTables.length} tables selected
                 </div>
 
                 {/* Tables grouped by schema */}
-                <div className="max-h-64 overflow-y-auto border rounded-lg">
+                <div className="max-h-64 overflow-y-auto border dark:border-gray-700 rounded-lg">
                   {Object.entries(tablesBySchema).map(([schema, tables]) => {
                     const schemaKeys = tables.map(getTableKey);
                     const allSchemaSelected = schemaKeys.every(k => selectedTables.has(k));
                     const someSchemaSelected = schemaKeys.some(k => selectedTables.has(k));
 
                     return (
-                      <div key={schema} className="border-b last:border-b-0">
+                      <div key={schema} className="border-b dark:border-gray-700 last:border-b-0">
                         {/* Schema header */}
                         <div
-                          className="flex items-center gap-2 px-4 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100"
+                          className="flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-gray-800 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
                           onClick={() => toggleSchema(schema)}
                         >
                           {allSchemaSelected ? (
                             <CheckSquare className="w-4 h-4 text-blue-500" />
                           ) : someSchemaSelected ? (
-                            <div className="w-4 h-4 border-2 border-blue-500 bg-blue-100 rounded" />
+                            <div className="w-4 h-4 border-2 border-blue-500 bg-blue-100 dark:bg-blue-900/30 rounded" />
                           ) : (
                             <Square className="w-4 h-4 text-gray-400" />
                           )}
-                          <span className="font-medium text-gray-700">{schema}</span>
-                          <span className="text-xs text-gray-500">({tables.length} tables)</span>
+                          <span className="font-medium text-gray-700 dark:text-gray-200">{schema}</span>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">({tables.length} tables)</span>
                         </div>
                         {/* Tables */}
-                        <div className="divide-y">
+                        <div className="divide-y dark:divide-gray-700">
                           {tables.map(table => {
                             const isSelected = selectedTables.has(getTableKey(table));
                             return (
                               <div
                                 key={getTableKey(table)}
-                                className={`flex items-center gap-2 px-4 py-2 pl-8 cursor-pointer hover:bg-gray-50 ${
-                                  isSelected ? 'bg-blue-50' : ''
+                                className={`flex items-center gap-2 px-4 py-2 pl-8 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 ${
+                                  isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : ''
                                 }`}
                                 onClick={() => toggleTable(table)}
                               >
@@ -475,7 +475,7 @@ export default function NewMirrorPage() {
                                 ) : (
                                   <Square className="w-4 h-4 text-gray-400" />
                                 )}
-                                <span className={isSelected ? 'text-blue-700' : 'text-gray-700'}>
+                                <span className={isSelected ? 'text-blue-700 dark:text-blue-400' : 'text-gray-700 dark:text-gray-200'}>
                                   {table.table_name}
                                 </span>
                               </div>
@@ -492,19 +492,19 @@ export default function NewMirrorPage() {
 
           {/* Selected Table Mappings */}
           {tableMappings.length > 0 && (
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-semibold mb-4">
+            <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-6">
+              <h2 className="text-lg font-semibold mb-4 dark:text-white">
                 Table Mappings ({tableMappings.length})
               </h2>
-              <p className="text-sm text-gray-500 mb-4">
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
                 Customize destination schema/table names if needed
               </p>
 
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {tableMappings.map((mapping, index) => (
-                  <div key={index} className="grid grid-cols-12 gap-2 items-center p-3 bg-gray-50 rounded-lg">
+                  <div key={index} className="grid grid-cols-12 gap-2 items-center p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
                     <div className="col-span-5 flex items-center gap-2">
-                      <span className="text-xs text-gray-500 w-16">Source:</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400 w-16">Source:</span>
                       <span className="font-mono text-sm">
                         {mapping.source_schema}.{mapping.source_table}
                       </span>
@@ -517,7 +517,7 @@ export default function NewMirrorPage() {
                         type="text"
                         value={mapping.destination_schema}
                         onChange={(e) => updateMapping(index, 'destination_schema', e.target.value)}
-                        className="w-full text-sm rounded border-gray-300 border p-1"
+                        className="w-full text-sm rounded border-gray-300 dark:border-gray-600 border p-1 dark:bg-gray-700 dark:text-white"
                         placeholder="schema"
                       />
                     </div>
@@ -526,7 +526,7 @@ export default function NewMirrorPage() {
                         type="text"
                         value={mapping.destination_table}
                         onChange={(e) => updateMapping(index, 'destination_table', e.target.value)}
-                        className="w-full text-sm rounded border-gray-300 border p-1"
+                        className="w-full text-sm rounded border-gray-300 dark:border-gray-600 border p-1 dark:bg-gray-700 dark:text-white"
                         placeholder="table"
                       />
                     </div>
@@ -534,7 +534,7 @@ export default function NewMirrorPage() {
                       <button
                         type="button"
                         onClick={() => removeMapping(index)}
-                        className="p-1 text-red-500 hover:bg-red-50 rounded"
+                        className="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -546,19 +546,19 @@ export default function NewMirrorPage() {
           )}
 
           {/* Options */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Replication Options</h2>
+          <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-6">
+            <h2 className="text-lg font-semibold mb-4 dark:text-white">Replication Options</h2>
             <div className="space-y-4">
               <label className="flex items-center gap-3">
                 <input
                   type="checkbox"
                   checked={formData.do_initial_snapshot}
                   onChange={(e) => setFormData({ ...formData, do_initial_snapshot: e.target.checked })}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
                 />
                 <div>
-                  <span className="font-medium">Initial Snapshot</span>
-                  <p className="text-sm text-gray-500">Copy existing data before starting CDC</p>
+                  <span className="font-medium dark:text-white">Initial Snapshot</span>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Copy existing data before starting CDC</p>
                 </div>
               </label>
 
@@ -567,11 +567,11 @@ export default function NewMirrorPage() {
                   type="checkbox"
                   checked={formData.replicate_indexes}
                   onChange={(e) => setFormData({ ...formData, replicate_indexes: e.target.checked })}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
                 />
                 <div>
-                  <span className="font-medium">Replicate Indexes</span>
-                  <p className="text-sm text-gray-500">Create indexes on destination tables</p>
+                  <span className="font-medium dark:text-white">Replicate Indexes</span>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Create indexes on destination tables</p>
                 </div>
               </label>
 
@@ -580,50 +580,50 @@ export default function NewMirrorPage() {
                   type="checkbox"
                   checked={formData.replicate_foreign_keys}
                   onChange={(e) => setFormData({ ...formData, replicate_foreign_keys: e.target.checked })}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
                 />
                 <div>
-                  <span className="font-medium">Replicate Foreign Keys</span>
-                  <p className="text-sm text-gray-500">Recreate FK constraints using defer strategy</p>
+                  <span className="font-medium dark:text-white">Replicate Foreign Keys</span>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Recreate FK constraints using defer strategy</p>
                 </div>
               </label>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700">Batch Size</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Batch Size</label>
                 <input
                   type="number"
                   value={formData.max_batch_size}
                   onChange={(e) => setFormData({ ...formData, max_batch_size: parseInt(e.target.value) })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
+                  className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 dark:bg-gray-800 dark:text-white"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Rows/Partition</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Rows/Partition</label>
                 <input
                   type="number"
                   value={formData.snapshot_num_rows_per_partition}
                   onChange={(e) => setFormData({ ...formData, snapshot_num_rows_per_partition: parseInt(e.target.value) })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
+                  className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 dark:bg-gray-800 dark:text-white"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Parallel Workers</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Parallel Workers</label>
                 <input
                   type="number"
                   value={formData.snapshot_max_parallel_workers}
                   onChange={(e) => setFormData({ ...formData, snapshot_max_parallel_workers: parseInt(e.target.value) })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
+                  className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 dark:bg-gray-800 dark:text-white"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Tables in Parallel</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">Tables in Parallel</label>
                 <input
                   type="number"
                   value={formData.snapshot_num_tables_in_parallel}
                   onChange={(e) => setFormData({ ...formData, snapshot_num_tables_in_parallel: parseInt(e.target.value) })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
+                  className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 dark:bg-gray-800 dark:text-white"
                 />
               </div>
             </div>
@@ -634,7 +634,7 @@ export default function NewMirrorPage() {
             <button
               type="button"
               onClick={() => router.push('/')}
-              className="px-6 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+              className="px-6 py-2 text-gray-700 hover:bg-gray-100 rounded-lg dark:text-gray-300 dark:hover:bg-gray-800"
             >
               Cancel
             </button>

@@ -19,14 +19,12 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
-  Info,
-  AlertTriangle,
-  XCircle,
   Plus,
   X,
   Save,
   Search,
 } from 'lucide-react';
+import { getStatusColor, getStatusIcon, getLogLevelColor, getLogLevelIcon } from '../../../lib/status';
 
 interface LogEntry {
   id: number;
@@ -342,54 +340,6 @@ export default function MirrorDetailPage() {
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status?.toUpperCase()) {
-      case 'RUNNING':
-      case 'SYNCED':
-        return 'bg-green-100 text-green-800 border-green-200';
-      case 'PAUSED':
-      case 'PAUSING':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'FAILED':
-      case 'ERROR':
-        return 'bg-red-100 text-red-800 border-red-200';
-      case 'SNAPSHOT':
-      case 'RESYNCING':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'SETTING_UP':
-      case 'CREATED':
-      case 'PENDING':
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-      default:
-        // CDC/SYNCING/Other processing states - use orange
-        return 'bg-orange-100 text-orange-800 border-orange-200';
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status?.toUpperCase()) {
-      case 'RUNNING':
-      case 'SYNCED':
-        return <CheckCircle className="w-5 h-5 text-green-500" />;
-      case 'PAUSED':
-      case 'PAUSING':
-        return <Pause className="w-5 h-5 text-yellow-500" />;
-      case 'FAILED':
-      case 'ERROR':
-        return <AlertCircle className="w-5 h-5 text-red-500" />;
-      case 'SNAPSHOT':
-      case 'RESYNCING':
-        return <RefreshCw className="w-5 h-5 text-blue-500 animate-spin" />;
-      case 'SETTING_UP':
-      case 'CREATED':
-      case 'PENDING':
-        return <Clock className="w-5 h-5 text-gray-500" />;
-      default:
-        // CDC/SYNCING/Other processing states - use orange with animation
-        return <RefreshCw className="w-5 h-5 text-orange-500 animate-spin" />;
-    }
-  };
-
   const formatNumber = (num: number) => {
     return new Intl.NumberFormat().format(num);
   };
@@ -397,32 +347,6 @@ export default function MirrorDetailPage() {
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return 'Never';
     return new Date(dateStr).toLocaleString();
-  };
-
-  const getLogLevelIcon = (level: string) => {
-    switch (level?.toUpperCase()) {
-      case 'ERROR':
-        return <XCircle className="w-4 h-4 text-red-500" />;
-      case 'WARN':
-        return <AlertTriangle className="w-4 h-4 text-yellow-500" />;
-      case 'INFO':
-        return <Info className="w-4 h-4 text-blue-500" />;
-      default:
-        return <Info className="w-4 h-4 text-gray-400" />;
-    }
-  };
-
-  const getLogLevelColor = (level: string) => {
-    switch (level?.toUpperCase()) {
-      case 'ERROR':
-        return 'bg-red-50 border-red-200';
-      case 'WARN':
-        return 'bg-yellow-50 border-yellow-200';
-      case 'INFO':
-        return 'bg-blue-50 border-blue-200';
-      default:
-        return 'bg-gray-50 border-gray-200';
-    }
   };
 
   if (loading) {
@@ -438,14 +362,14 @@ export default function MirrorDetailPage() {
       <div className="space-y-6">
         <button
           onClick={() => router.push('/')}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
+          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Mirrors
         </button>
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center dark:bg-red-900/20 dark:border-red-800">
           <AlertCircle className="w-12 h-12 mx-auto text-red-500 mb-4" />
-          <h2 className="text-lg font-semibold text-red-700">{error || 'Mirror not found'}</h2>
+          <h2 className="text-lg font-semibold text-red-700 dark:text-red-400">{error || 'Mirror not found'}</h2>
         </div>
       </div>
     );
@@ -458,15 +382,15 @@ export default function MirrorDetailPage() {
         <div className="flex items-center gap-4">
           <button
             onClick={() => router.push('/')}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
+            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div className="flex items-center gap-3">
-            {getStatusIcon(mirror.status)}
+            {getStatusIcon(mirror.status, 'md')}
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">{mirror.name}</h1>
-              <p className="text-sm text-gray-500">
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{mirror.name}</h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
                 Slot: {mirror.slot_name || 'N/A'} | Publication: {mirror.publication_name || 'N/A'}
               </p>
             </div>
@@ -479,28 +403,28 @@ export default function MirrorDetailPage() {
 
       {/* Error Message */}
       {mirror.error_message && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 dark:bg-red-900/20 dark:border-red-800">
           <div className="flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-500 mt-0.5" />
             <div>
-              <h3 className="font-medium text-red-800">Error</h3>
-              <p className="text-sm text-red-700 mt-1">{mirror.error_message}</p>
-              <p className="text-xs text-red-500 mt-2">Error count: {mirror.error_count}</p>
+              <h3 className="font-medium text-red-800 dark:text-red-400">Error</h3>
+              <p className="text-sm text-red-700 dark:text-red-400 mt-1">{mirror.error_message}</p>
+              <p className="text-xs text-red-500 dark:text-red-400 mt-2">Error count: {mirror.error_count}</p>
             </div>
           </div>
         </div>
       )}
 
       {/* Actions */}
-      <div className="bg-white rounded-lg shadow p-4">
-        <h2 className="text-sm font-medium text-gray-500 mb-3">Actions</h2>
+      <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-4">
+        <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Actions</h2>
         {actionError && (
-          <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <span className="text-sm text-amber-800">{actionError}</span>
+          <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2 dark:bg-amber-900/20 dark:border-amber-800">
+            <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+            <span className="text-sm text-amber-800 dark:text-amber-300">{actionError}</span>
             <button
               onClick={() => setActionError(null)}
-              className="ml-auto text-amber-600 hover:text-amber-800"
+              className="ml-auto text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-200"
             >
               <X className="w-4 h-4" />
             </button>
@@ -511,7 +435,7 @@ export default function MirrorDetailPage() {
             <button
               onClick={() => performAction('pause')}
               disabled={actionLoading === 'pause'}
-              className="flex items-center gap-2 px-4 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 disabled:opacity-50 dark:bg-yellow-900/30 dark:text-yellow-400 dark:hover:bg-yellow-900/50"
             >
               {actionLoading === 'pause' ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
@@ -526,7 +450,7 @@ export default function MirrorDetailPage() {
               <button
                 onClick={() => performAction('resume')}
                 disabled={actionLoading === 'resume'}
-                className="flex items-center gap-2 px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
               >
                 {actionLoading === 'resume' ? (
                   <RefreshCw className="w-4 h-4 animate-spin" />
@@ -537,7 +461,7 @@ export default function MirrorDetailPage() {
               </button>
               <button
                 onClick={openTableEditor}
-                className="flex items-center gap-2 px-4 py-2 bg-cyan-100 text-cyan-700 rounded-lg hover:bg-cyan-200"
+                className="flex items-center gap-2 px-4 py-2 bg-cyan-100 text-cyan-700 rounded-lg hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400 dark:hover:bg-cyan-900/50"
               >
                 <Settings className="w-4 h-4" />
                 Edit Tables
@@ -547,7 +471,7 @@ export default function MirrorDetailPage() {
           <button
             onClick={() => performAction('retry')}
             disabled={actionLoading === 'retry'}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 disabled:opacity-50 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
           >
             {actionLoading === 'retry' ? (
               <RefreshCw className="w-4 h-4 animate-spin" />
@@ -559,7 +483,7 @@ export default function MirrorDetailPage() {
           <button
             onClick={() => performAction('resync')}
             disabled={actionLoading === 'resync'}
-            className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 disabled:opacity-50 dark:bg-purple-900/30 dark:text-purple-400 dark:hover:bg-purple-900/50"
           >
             {actionLoading === 'resync' ? (
               <RefreshCw className="w-4 h-4 animate-spin" />
@@ -571,7 +495,7 @@ export default function MirrorDetailPage() {
           <button
             onClick={() => performAction('sync-schema')}
             disabled={actionLoading === 'sync-schema'}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 disabled:opacity-50 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50"
           >
             {actionLoading === 'sync-schema' ? (
               <RefreshCw className="w-4 h-4 animate-spin" />
@@ -582,7 +506,7 @@ export default function MirrorDetailPage() {
           </button>
           <button
             onClick={() => setShowDeleteConfirm(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 ml-auto"
+            className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 ml-auto dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
           >
             <Trash2 className="w-4 h-4" />
             Delete Mirror
@@ -592,35 +516,35 @@ export default function MirrorDetailPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <Activity className="w-5 h-5 text-blue-600" />
+            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+              <Activity className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Last LSN</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Last LSN</p>
               <p className="text-lg font-semibold font-mono">{formatNumber(mirror.last_lsn || 0)}</p>
             </div>
           </div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <Database className="w-5 h-5 text-green-600" />
+            <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+              <Database className="w-5 h-5 text-green-600 dark:text-green-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Sync Batch ID</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Sync Batch ID</p>
               <p className="text-lg font-semibold font-mono">{formatNumber(mirror.last_sync_batch_id || 0)}</p>
             </div>
           </div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
+        <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-purple-100 rounded-lg">
-              <Table className="w-5 h-5 text-purple-600" />
+            <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
+              <Table className="w-5 h-5 text-purple-600 dark:text-purple-400" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Tables</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Tables</p>
               <p className="text-lg font-semibold">{allTables.length || mirror.tables?.length || 0}</p>
             </div>
           </div>
@@ -628,15 +552,15 @@ export default function MirrorDetailPage() {
       </div>
 
       {/* Tabs */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="border-b">
+      <div className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20">
+        <div className="border-b dark:border-gray-700">
           <nav className="flex">
             <button
               onClick={() => setActiveTab('tables')}
               className={`px-6 py-4 text-sm font-medium border-b-2 ${
                 activeTab === 'tables'
                   ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:border-gray-600'
               }`}
             >
               <div className="flex items-center gap-2">
@@ -649,7 +573,7 @@ export default function MirrorDetailPage() {
               className={`px-6 py-4 text-sm font-medium border-b-2 ${
                 activeTab === 'logs'
                   ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:border-gray-600'
               }`}
             >
               <div className="flex items-center gap-2">
@@ -664,7 +588,7 @@ export default function MirrorDetailPage() {
         {activeTab === 'tables' && (
           <>
             {/* Search bar */}
-            <div className="p-4 border-b">
+            <div className="p-4 border-b dark:border-gray-700">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
@@ -672,7 +596,7 @@ export default function MirrorDetailPage() {
                   placeholder="Search tables..."
                   value={tableSearch}
                   onChange={(e) => setTableSearch(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
                 />
               </div>
             </div>
@@ -683,7 +607,7 @@ export default function MirrorDetailPage() {
               );
 
               return filteredTables.length > 0 ? (
-                <div className="divide-y max-h-[500px] overflow-y-auto">
+                <div className="divide-y dark:divide-gray-700 max-h-[500px] overflow-y-auto">
                   {filteredTables.map((table) => (
                     <div key={table.table_name} className="p-4">
                       <div
@@ -698,7 +622,7 @@ export default function MirrorDetailPage() {
                           )}
                           <div>
                             <span className="font-mono text-sm font-medium">{table.table_name}</span>
-                            <p className="text-xs text-gray-500">
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
                               {formatNumber(table.rows_synced)} rows synced
                               {(table.rows_inserted !== undefined || table.rows_updated !== undefined) && (
                                 <span className="ml-2">
@@ -718,7 +642,7 @@ export default function MirrorDetailPage() {
                               performAction('resync', table.table_name);
                             }}
                             disabled={actionLoading === `resync-${table.table_name}`}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50"
+                            className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50 dark:bg-purple-900/30 dark:text-purple-400 dark:hover:bg-purple-900/50"
                             title="Resync this table"
                           >
                             {actionLoading === `resync-${table.table_name}` ? (
@@ -731,36 +655,36 @@ export default function MirrorDetailPage() {
                         </div>
                       </div>
                       {expandedTables.has(table.table_name) && (
-                        <div className="mt-4 ml-7 p-3 bg-gray-50 rounded-lg">
+                        <div className="mt-4 ml-7 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
                           <div className="grid grid-cols-2 gap-4 text-sm">
                             <div>
-                              <span className="text-gray-500">Status:</span>
+                              <span className="text-gray-500 dark:text-gray-400">Status:</span>
                               <span className="ml-2 font-medium">{table.status}</span>
                             </div>
                             <div>
-                              <span className="text-gray-500">Rows Synced:</span>
+                              <span className="text-gray-500 dark:text-gray-400">Rows Synced:</span>
                               <span className="ml-2 font-medium font-mono">{formatNumber(table.rows_synced)}</span>
                             </div>
                             {table.rows_inserted !== undefined && (
                               <div>
-                                <span className="text-gray-500">Rows Inserted:</span>
-                                <span className="ml-2 font-medium font-mono text-green-600">{formatNumber(table.rows_inserted)}</span>
+                                <span className="text-gray-500 dark:text-gray-400">Rows Inserted:</span>
+                                <span className="ml-2 font-medium font-mono text-green-600 dark:text-green-400">{formatNumber(table.rows_inserted)}</span>
                               </div>
                             )}
                             {table.rows_updated !== undefined && (
                               <div>
-                                <span className="text-gray-500">Rows Updated:</span>
-                                <span className="ml-2 font-medium font-mono text-blue-600">{formatNumber(table.rows_updated)}</span>
+                                <span className="text-gray-500 dark:text-gray-400">Rows Updated:</span>
+                                <span className="ml-2 font-medium font-mono text-blue-600 dark:text-blue-400">{formatNumber(table.rows_updated)}</span>
                               </div>
                             )}
                             <div>
-                              <span className="text-gray-500">Last Synced:</span>
+                              <span className="text-gray-500 dark:text-gray-400">Last Synced:</span>
                               <span className="ml-2 font-medium">{formatDate(table.last_synced_at)}</span>
                             </div>
                             {table.error_message && (
                               <div className="col-span-2">
                                 <span className="text-red-500">Error:</span>
-                                <span className="ml-2 text-red-700">{table.error_message}</span>
+                                <span className="ml-2 text-red-700 dark:text-red-400">{table.error_message}</span>
                               </div>
                             )}
                           </div>
@@ -770,8 +694,8 @@ export default function MirrorDetailPage() {
                   ))}
                 </div>
               ) : (
-                <div className="p-8 text-center text-gray-500">
-                  <Table className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                <div className="p-8 text-center text-gray-500 dark:text-gray-400">
+                  <Table className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600 mb-3" />
                   {tableSearch ? (
                     <p>No tables matching &quot;{tableSearch}&quot;</p>
                   ) : (
@@ -788,7 +712,7 @@ export default function MirrorDetailPage() {
 
         {/* Logs Tab */}
         {activeTab === 'logs' && (
-          <div className="divide-y max-h-[600px] overflow-y-auto">
+          <div className="divide-y dark:divide-gray-700 max-h-[600px] overflow-y-auto">
             {logs.length > 0 ? (
               logs.map((log) => (
                 <div key={log.id} className={`p-4 ${getLogLevelColor(log.level)} border-l-4`}>
@@ -796,13 +720,13 @@ export default function MirrorDetailPage() {
                     {getLogLevelIcon(log.level)}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-4">
-                        <span className="font-medium text-gray-900">{log.message}</span>
-                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                        <span className="font-medium text-gray-900 dark:text-white">{log.message}</span>
+                        <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
                           {formatDate(log.created_at)}
                         </span>
                       </div>
                       {log.details && (
-                        <pre className="mt-2 text-xs text-gray-600 bg-white bg-opacity-50 rounded p-2 overflow-x-auto">
+                        <pre className="mt-2 text-xs text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 bg-opacity-50 dark:bg-opacity-50 rounded p-2 overflow-x-auto">
                           {(() => {
                             try {
                               return JSON.stringify(JSON.parse(log.details), null, 2);
@@ -817,8 +741,8 @@ export default function MirrorDetailPage() {
                 </div>
               ))
             ) : (
-              <div className="p-8 text-center text-gray-500">
-                <FileText className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+              <div className="p-8 text-center text-gray-500 dark:text-gray-400">
+                <FileText className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600 mb-3" />
                 <p>No logs available yet.</p>
                 <p className="text-sm mt-1">Logs will appear as the mirror performs operations.</p>
               </div>
@@ -830,16 +754,16 @@ export default function MirrorDetailPage() {
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Mirror?</h3>
-            <p className="text-gray-600 mb-4">
+          <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl dark:shadow-gray-900/40 max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Delete Mirror?</h3>
+            <p className="text-gray-600 dark:text-gray-300 mb-4">
               Are you sure you want to delete &quot;{mirror.name}&quot;? This will stop replication and clean up
               the replication slot and publication on the source database.
             </p>
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Cancel
               </button>
@@ -863,25 +787,25 @@ export default function MirrorDetailPage() {
       {/* Table Editor Modal */}
       {showTableEditor && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="p-6 border-b flex items-center justify-between">
+          <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl dark:shadow-gray-900/40 max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b dark:border-gray-700 flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">Edit Table Mappings</h3>
-                <p className="text-sm text-gray-500 mt-1">Add or remove tables from this mirror while paused</p>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Edit Table Mappings</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Add or remove tables from this mirror while paused</p>
               </div>
               <button
                 onClick={() => setShowTableEditor(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg"
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
               >
-                <X className="w-5 h-5 text-gray-500" />
+                <X className="w-5 h-5 text-gray-500 dark:text-gray-400" />
               </button>
             </div>
 
             <div className="p-6 overflow-y-auto flex-1">
               {tableEditorError && (
-                <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
+                <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2 dark:bg-red-900/20 dark:border-red-800">
                   <AlertCircle className="w-4 h-4 text-red-500" />
-                  <span className="text-sm text-red-700">{tableEditorError}</span>
+                  <span className="text-sm text-red-700 dark:text-red-400">{tableEditorError}</span>
                 </div>
               )}
 
@@ -893,7 +817,7 @@ export default function MirrorDetailPage() {
                   placeholder="Search tables..."
                   value={tableEditorSearch}
                   onChange={(e) => setTableEditorSearch(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
                 />
                 <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs text-gray-400">
                   {tableMappings.length} tables
@@ -910,53 +834,53 @@ export default function MirrorDetailPage() {
                     mapping.destination_table.toLowerCase().includes(tableEditorSearch.toLowerCase())
                   )
                   .map(({ mapping, index }) => (
-                  <div key={index} className="bg-gray-50 rounded-lg p-4 border">
+                  <div key={index} className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border dark:border-gray-700">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Source Schema</label>
+                          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Source Schema</label>
                           <input
                             type="text"
                             value={mapping.source_schema}
                             onChange={(e) => updateTableMapping(index, 'source_schema', e.target.value)}
-                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono"
+                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                             placeholder="public"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Source Table</label>
+                          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Source Table</label>
                           <input
                             type="text"
                             value={mapping.source_table}
                             onChange={(e) => updateTableMapping(index, 'source_table', e.target.value)}
-                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono"
+                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                             placeholder="table_name"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Destination Schema</label>
+                          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Destination Schema</label>
                           <input
                             type="text"
                             value={mapping.destination_schema}
                             onChange={(e) => updateTableMapping(index, 'destination_schema', e.target.value)}
-                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono"
+                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                             placeholder="public"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Destination Table</label>
+                          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Destination Table</label>
                           <input
                             type="text"
                             value={mapping.destination_table}
                             onChange={(e) => updateTableMapping(index, 'destination_table', e.target.value)}
-                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono"
+                            className="w-full px-3 py-2 border rounded-lg text-sm font-mono dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                             placeholder="table_name"
                           />
                         </div>
                       </div>
                       <button
                         onClick={() => removeTableMapping(index)}
-                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg mt-5"
+                        className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg mt-5"
                         title="Remove table"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -966,8 +890,8 @@ export default function MirrorDetailPage() {
                 ))}
 
                 {tableMappings.length === 0 && (
-                  <div className="text-center py-8 text-gray-500">
-                    <Table className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                  <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                    <Table className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600 mb-3" />
                     <p>No tables configured</p>
                     <p className="text-sm mt-1">Add tables to replicate</p>
                   </div>
@@ -977,27 +901,27 @@ export default function MirrorDetailPage() {
                   m.source_table.toLowerCase().includes(tableEditorSearch.toLowerCase()) ||
                   m.source_schema.toLowerCase().includes(tableEditorSearch.toLowerCase())
                 ).length === 0 && (
-                  <div className="text-center py-8 text-gray-500">
-                    <Search className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                  <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                    <Search className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600 mb-3" />
                     <p>No tables matching &quot;{tableEditorSearch}&quot;</p>
                   </div>
                 )}
               </div>
 
               {/* Available Tables Section */}
-              <div className="mt-6 border-t pt-4">
-                <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+              <div className="mt-6 border-t dark:border-gray-700 pt-4">
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
                   <Plus className="w-4 h-4" />
                   Add Tables from Source Database
                 </h4>
                 {loadingAvailableTables ? (
                   <div className="flex items-center justify-center py-4">
                     <RefreshCw className="w-5 h-5 animate-spin text-blue-500" />
-                    <span className="ml-2 text-sm text-gray-500">Loading available tables...</span>
+                    <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">Loading available tables...</span>
                   </div>
                 ) : availableTables.length > 0 ? (
                   <>
-                    <div className="max-h-[200px] overflow-y-auto border rounded-lg divide-y">
+                    <div className="max-h-[200px] overflow-y-auto border dark:border-gray-700 rounded-lg divide-y dark:divide-gray-700">
                       {availableTables
                         .filter(t =>
                           tableEditorSearch === '' ||
@@ -1007,14 +931,14 @@ export default function MirrorDetailPage() {
                         .map((table) => (
                           <div
                             key={`${table.schema}.${table.table_name}`}
-                            className="flex items-center justify-between px-3 py-2 hover:bg-gray-50"
+                            className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800"
                           >
                             <span className="font-mono text-sm">
                               {table.schema}.{table.table_name}
                             </span>
                             <button
                               onClick={() => addTableFromAvailable(table.schema, table.table_name)}
-                              className="flex items-center gap-1 px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200"
+                              className="flex items-center gap-1 px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
                             >
                               <Plus className="w-3 h-3" />
                               Add
@@ -1026,7 +950,7 @@ export default function MirrorDetailPage() {
                         t.table_name.toLowerCase().includes(tableEditorSearch.toLowerCase()) ||
                         t.schema.toLowerCase().includes(tableEditorSearch.toLowerCase())
                       ).length === 0 && (
-                        <div className="text-center py-4 text-gray-500 text-sm">
+                        <div className="text-center py-4 text-gray-500 dark:text-gray-400 text-sm">
                           No available tables matching search
                         </div>
                       )}
@@ -1036,7 +960,7 @@ export default function MirrorDetailPage() {
                     </p>
                   </>
                 ) : (
-                  <div className="text-center py-4 text-gray-500 text-sm border rounded-lg bg-gray-50">
+                  <div className="text-center py-4 text-gray-500 dark:text-gray-400 text-sm border dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800">
                     <CheckCircle className="w-5 h-5 mx-auto text-green-500 mb-1" />
                     All source tables are already in the mirror
                   </div>
@@ -1044,10 +968,10 @@ export default function MirrorDetailPage() {
               </div>
             </div>
 
-            <div className="p-6 border-t bg-gray-50 flex justify-end gap-3">
+            <div className="p-6 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex justify-end gap-3">
               <button
                 onClick={() => setShowTableEditor(false)}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-200 rounded-lg"
+                className="px-4 py-2 text-gray-700 hover:bg-gray-200 rounded-lg dark:text-gray-300 dark:hover:bg-gray-700"
               >
                 Cancel
               </button>
