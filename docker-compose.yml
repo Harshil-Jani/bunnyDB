@@ -122,8 +122,51 @@ services:
     depends_on:
       - bunny-api
 
+  # Test databases for sanity testing
+  source-db:
+    container_name: bunny-source-db
+    image: postgres:16-alpine
+    command: -c config_file=/etc/postgresql.conf
+    restart: unless-stopped
+    ports:
+      - 5434:5432
+    environment:
+      PGUSER: postgres
+      POSTGRES_PASSWORD: sourcepass
+      POSTGRES_DB: source_db
+    volumes:
+      - source-pgdata:/var/lib/postgresql/data
+      - ./volumes/postgresql.conf:/etc/postgresql.conf
+    healthcheck:
+      test: ["CMD", "pg_isready", "-d", "source_db", "-U", "postgres"]
+      interval: 10s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+
+  dest-db:
+    container_name: bunny-dest-db
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - 5435:5432
+    environment:
+      PGUSER: postgres
+      POSTGRES_PASSWORD: destpass
+      POSTGRES_DB: dest_db
+    volumes:
+      - dest-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-d", "dest_db", "-U", "postgres"]
+      interval: 10s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+
 volumes:
   bunny-pgdata:
+  source-pgdata:
+  dest-pgdata:
 
 networks:
   default:
