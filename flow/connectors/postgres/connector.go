@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -256,10 +257,15 @@ func (c *PostgresConnector) GetPGVersion(ctx context.Context) (shared.PGVersion,
 		return c.pgVersion, nil
 	}
 
-	var version int
-	err := c.conn.QueryRow(ctx, "SHOW server_version_num").Scan(&version)
+	var versionStr string
+	err := c.conn.QueryRow(ctx, "SHOW server_version_num").Scan(&versionStr)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get postgres version: %w", err)
+	}
+
+	version, err := strconv.Atoi(versionStr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse postgres version %q: %w", versionStr, err)
 	}
 
 	c.pgVersion = shared.PGVersion(version)
