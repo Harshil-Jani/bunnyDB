@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { ThemeProvider } from './ThemeProvider';
 import { ThemeToggle } from './ThemeToggle';
+import { BunnyLogo } from './BunnyLogo';
 
 export function LayoutContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -16,7 +17,7 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
             <div className="flex justify-between h-16">
               <div className="flex items-center">
                 <a href="/" className="flex items-center">
-                  <span className="text-2xl">🐰</span>
+                  <BunnyLogo size={28} />
                   <span className="ml-2 text-xl font-bold text-gray-900 dark:text-white">BunnyDB</span>
                 </a>
               </div>

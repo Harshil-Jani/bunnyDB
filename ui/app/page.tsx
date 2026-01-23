@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Zap, Shield, RefreshCw, Database, GitBranch, Table, Activity, Clock, CheckCircle } from 'lucide-react';
 import { CapabilitiesGraph } from '../components/CapabilitiesGraph';
+import { BunnyLogo } from '../components/BunnyLogo';
 import { useState, useEffect } from 'react';
 
 export default function LandingPage() {
@@ -188,7 +189,7 @@ export default function LandingPage() {
             {/* BunnyDB Engine */}
             <div className="text-center p-4">
               <div className="mx-auto w-20 h-20 rounded-2xl bg-bunny-500/10 border-2 border-bunny-500/30 flex items-center justify-center mb-3 relative">
-                <span className="text-3xl">🐰</span>
+                <BunnyLogo size={40} />
                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full border-2 border-gray-900 dark:border-gray-950"></div>
               </div>
               <div className="text-sm font-semibold text-bunny-300">BunnyDB</div>
@@ -283,7 +284,7 @@ export default function LandingPage() {
         {/* Final CTA */}
         <div className="mt-20 text-center">
           <div className="inline-flex flex-col items-center p-10 rounded-3xl bg-gradient-to-br from-bunny-50 to-orange-50 dark:from-bunny-950/30 dark:to-orange-950/20 border border-bunny-100 dark:border-bunny-900/30">
-            <span className="text-5xl mb-4">🐰</span>
+            <BunnyLogo size={56} className="mb-4" />
             <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Ready to replicate?</h3>
             <p className="mt-2 text-gray-600 dark:text-gray-400 max-w-md">
               Your BunnyDB instance is running. Start by adding peer connections to your PostgreSQL databases.
@@ -303,7 +304,7 @@ export default function LandingPage() {
       <footer className="border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
         <div className="max-w-6xl mx-auto px-6 py-8 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-xl">🐰</span>
+            <BunnyLogo size={24} />
             <span className="font-bold text-gray-900 dark:text-white">BunnyDB</span>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">

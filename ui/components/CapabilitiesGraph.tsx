@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTheme } from 'next-themes';
 import { Zap, Table, RefreshCw, GitBranch, Shield, Activity, LucideIcon } from 'lucide-react';
+import { BunnyLogo } from './BunnyLogo';
 import * as d3 from 'd3';
 
 interface Feature {
@@ -329,8 +330,8 @@ export function CapabilitiesGraph() {
             width={32}
             height={32}
           >
-            <div className="w-full h-full flex items-center justify-center text-2xl">
-              🐰
+            <div className="w-full h-full flex items-center justify-center">
+              <BunnyLogo size={28} />
             </div>
           </foreignObject>
           {/* Pulsing ring */}
