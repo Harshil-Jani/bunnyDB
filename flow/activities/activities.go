@@ -371,12 +371,25 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 			if ctx.Err() != nil {
 				return &SyncOutput{LastLSN: lastLSN, BatchID: batchID}, ctx.Err()
 			}
+			errMsg := err.Error()
+			// Connection closed errors are fatal (slot dropped or signal-triggered cancellation)
+			if strings.Contains(errMsg, "conn closed") || strings.Contains(errMsg, "connection reset") ||
+				strings.Contains(errMsg, "use of closed network connection") {
+				logger.Info("replication connection closed, stopping sync",
+					slog.Int64("lastLSN", lastLSN),
+					slog.Int64("recordsProcessed", recordsProcessed))
+				return &SyncOutput{LastLSN: lastLSN, BatchID: batchID}, fmt.Errorf("replication connection lost: %w", err)
+			}
 			logger.Error("failed to pull records", slog.Any("error", err))
 			// Send heartbeat on error to stay alive
 			activity.RecordHeartbeat(ctx, fmt.Sprintf("error pulling records, retrying: %v", err))
 			lastHeartbeat = time.Now()
-			// Sleep briefly before retrying
-			time.Sleep(1 * time.Second)
+			// Context-aware sleep before retrying
+			select {
+			case <-ctx.Done():
+				return &SyncOutput{LastLSN: lastLSN, BatchID: batchID}, ctx.Err()
+			case <-time.After(1 * time.Second):
+			}
 			continue
 		}
 
