@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { NextStepProvider, NextStep, useNextStep } from 'nextstepjs';
-import { tourSteps } from '../lib/tour-steps';
+import { getTourSteps } from '../lib/tour-steps';
 import { TourCard } from './TourCard';
-import { getToken } from '../lib/auth';
+import { getToken, isAdmin } from '../lib/auth';
 
 function TourTrigger() {
   const { startNextStep } = useNextStep();
@@ -15,7 +15,6 @@ function TourTrigger() {
 
     const hasSeenTour = localStorage.getItem('bunny_tour_seen');
     if (!hasSeenTour) {
-      // Small delay to let the page render and IDs to be available
       const timer = setTimeout(() => {
         startNextStep('onboarding');
         localStorage.setItem('bunny_tour_seen', '1');
@@ -28,10 +27,13 @@ function TourTrigger() {
 }
 
 export function OnboardingTour({ children }: { children: React.ReactNode }) {
+  const role = isAdmin() ? 'admin' : 'readonly';
+  const steps = useMemo(() => getTourSteps(role), [role]);
+
   return (
     <NextStepProvider>
       <NextStep
-        steps={tourSteps}
+        steps={steps}
         cardComponent={TourCard}
         shadowRgb="0, 0, 0"
         shadowOpacity="0.5"
