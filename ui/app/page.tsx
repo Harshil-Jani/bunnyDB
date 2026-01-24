@@ -1,9 +1,154 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Database, ArrowDown } from 'lucide-react';
+import { ArrowRight, Database, ArrowDown, MousePointer } from 'lucide-react';
 import { BunnyLogo } from '../components/BunnyLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
+
+const demoSteps = [
+  {
+    label: 'Register Peers',
+    description: 'Add source & destination PostgreSQL connections',
+    visual: (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+          <Database className="w-4 h-4 text-blue-500" />
+          <span className="text-xs font-medium text-gray-700 dark:text-gray-200">production-db</span>
+          <span className="ml-auto text-[10px] text-green-600 dark:text-green-400 font-medium">Connected</span>
+        </div>
+        <div className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+          <Database className="w-4 h-4 text-purple-500" />
+          <span className="text-xs font-medium text-gray-700 dark:text-gray-200">analytics-replica</span>
+          <span className="ml-auto text-[10px] text-green-600 dark:text-green-400 font-medium">Connected</span>
+        </div>
+      </div>
+    ),
+  },
+  {
+    label: 'Select Tables',
+    description: 'Choose which tables to replicate',
+    visual: (
+      <div className="space-y-1.5">
+        {['users', 'orders', 'products', 'payments'].map((t, i) => (
+          <div key={t} className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+            <div className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center ${i < 3 ? 'border-blue-500 bg-blue-500' : 'border-gray-300 dark:border-gray-600'}`}>
+              {i < 3 && <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 12 12"><path d="M10.28 2.28L3.989 8.575 1.695 6.28A1 1 0 00.28 7.695l3 3a1 1 0 001.414 0l7-7A1 1 0 0010.28 2.28z"/></svg>}
+            </div>
+            <span className="text-xs text-gray-700 dark:text-gray-200 font-mono">public.{t}</span>
+          </div>
+        ))}
+      </div>
+    ),
+  },
+  {
+    label: 'Monitor Replication',
+    description: 'Real-time status, logs, and controls',
+    visual: (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between px-3 py-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-xs font-medium text-gray-700 dark:text-gray-200">prod-to-analytics</span>
+          </div>
+          <span className="text-[10px] font-medium text-green-600 dark:text-green-400 px-2 py-0.5 bg-green-50 dark:bg-green-900/30 rounded-full">REPLICATING</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="px-2 py-1.5 bg-gray-50 dark:bg-gray-800/50 rounded text-center">
+            <div className="text-[10px] text-gray-400">Tables</div>
+            <div className="text-xs font-bold text-gray-700 dark:text-gray-200">3</div>
+          </div>
+          <div className="px-2 py-1.5 bg-gray-50 dark:bg-gray-800/50 rounded text-center">
+            <div className="text-[10px] text-gray-400">Batch</div>
+            <div className="text-xs font-bold text-gray-700 dark:text-gray-200">1,247</div>
+          </div>
+          <div className="px-2 py-1.5 bg-gray-50 dark:bg-gray-800/50 rounded text-center">
+            <div className="text-[10px] text-gray-400">Lag</div>
+            <div className="text-xs font-bold text-gray-700 dark:text-gray-200">&lt;1s</div>
+          </div>
+        </div>
+      </div>
+    ),
+  },
+];
+
+function DemoAnimation() {
+  const [activeStep, setActiveStep] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveStep((s) => (s + 1) % demoSteps.length);
+    }, 3500);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="max-w-3xl mx-auto">
+      {/* Step tabs */}
+      <div className="flex items-center justify-center gap-1 mb-6">
+        {demoSteps.map((step, i) => (
+          <button
+            key={i}
+            onClick={() => setActiveStep(i)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-all ${
+              i === activeStep
+                ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-sm'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
+            }`}
+          >
+            <span className="w-4 h-4 rounded-full border-2 flex items-center justify-center text-[9px] font-bold border-current">
+              {i + 1}
+            </span>
+            {step.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Demo window */}
+      <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
+        {/* Window chrome */}
+        <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+          <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
+          <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
+          <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
+          <div className="ml-3 flex-1 flex items-center justify-center">
+            <div className="px-3 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px] text-gray-400 font-mono">
+              localhost:3000/{activeStep === 0 ? 'peers' : activeStep === 1 ? 'mirrors/new' : 'mirrors'}
+            </div>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 min-h-[200px] flex flex-col justify-center">
+          <div className="max-w-xs mx-auto w-full">
+            <p className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wider font-medium mb-1">
+              Step {activeStep + 1}
+            </p>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
+              {demoSteps[activeStep].label}
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              {demoSteps[activeStep].description}
+            </p>
+            {demoSteps[activeStep].visual}
+          </div>
+        </div>
+
+        {/* Progress dots */}
+        <div className="flex items-center justify-center gap-1.5 pb-4">
+          {demoSteps.map((_, i) => (
+            <div
+              key={i}
+              className={`h-1 rounded-full transition-all duration-300 ${
+                i === activeStep ? 'w-6 bg-bunny-500' : 'w-1.5 bg-gray-300 dark:bg-gray-700'
+              }`}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function LandingPage() {
   const router = useRouter();
@@ -188,6 +333,37 @@ export default function LandingPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Interactive Demo Walkthrough */}
+      <section className="border-t border-gray-100 dark:border-gray-900">
+        <div className="max-w-5xl mx-auto px-6 py-20">
+          <div className="text-center mb-12">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">See it in action</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto">
+              A quick walkthrough of the BunnyDB dashboard — from adding peers to monitoring active mirrors.
+            </p>
+          </div>
+
+          {/* Animated UI Mockup */}
+          <DemoAnimation />
+
+          <div className="mt-10 text-center">
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+              Want a hands-on tour? Log in and we'll guide you through the interface step by step.
+            </p>
+            <button
+              onClick={() => {
+                localStorage.removeItem('bunny_tour_seen');
+                router.push('/mirrors');
+              }}
+              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
+            >
+              <MousePointer className="w-4 h-4" />
+              Take the Interactive Tour
+            </button>
           </div>
         </div>
       </section>

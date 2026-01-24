@@ -151,6 +151,7 @@ export default function PeersPage() {
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Peers</h1>
         {admin && (
           <button
+            id="add-peer-btn"
             onClick={openCreateForm}
             className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
           >
@@ -285,7 +286,7 @@ export default function PeersPage() {
           <p className="text-gray-500 dark:text-gray-400">Add a peer connection to get started with replication.</p>
         </div>
       ) : (
-        <div className="grid gap-4">
+        <div id="peers-list" className="grid gap-4">
           {peers.map((peer) => (
             <div key={peer.id} className="bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-gray-900/20 p-6">
               <div className="flex justify-between items-start">

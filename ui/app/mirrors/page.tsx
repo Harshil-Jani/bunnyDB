@@ -86,6 +86,7 @@ export default function Home() {
           </button>
           {admin && (
             <button
+              id="create-mirror-btn"
               onClick={() => router.push('/mirrors/new')}
               className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
             >
@@ -119,7 +120,7 @@ export default function Home() {
           )}
         </div>
       ) : (
-        <div className="grid gap-4">
+        <div id="mirrors-list" className="grid gap-4">
           {mirrors.map((mirror) => (
             <div
               key={mirror.name}
