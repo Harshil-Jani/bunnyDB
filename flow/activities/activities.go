@@ -406,7 +406,7 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 		}
 
 		// Apply records to destination
-		for _, rec := range records {
+		for i, rec := range records {
 			tableKey := fmt.Sprintf("%s.%s", rec.Schema, rec.Table)
 			pkCols := tablePKs[tableKey]
 
@@ -434,6 +434,12 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 				logger.Debug("CDC progress",
 					slog.Int64("records", recordsProcessed),
 					slog.Int64("lsn", rec.LSN))
+			}
+
+			// Send heartbeat during large batch applies to avoid timeout
+			if time.Since(lastHeartbeat) > 10*time.Second {
+				activity.RecordHeartbeat(ctx, fmt.Sprintf("applying batch: %d/%d records, LSN=%d", i+1, len(records), lastLSN))
+				lastHeartbeat = time.Now()
 			}
 		}
 
@@ -481,6 +487,12 @@ func (a *Activities) SyncFlow(ctx context.Context, input *SyncInput) (*SyncOutpu
 			if err != nil {
 				logger.Warn("failed to update mirror checkpoint", slog.Any("error", err))
 			}
+		}
+
+		// Heartbeat after batch processing + DB updates
+		if time.Since(lastHeartbeat) > 10*time.Second {
+			activity.RecordHeartbeat(ctx, fmt.Sprintf("batch done: LSN=%d, total=%d", lastLSN, recordsProcessed))
+			lastHeartbeat = time.Now()
 		}
 
 		// Log batch completion

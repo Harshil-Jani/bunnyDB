@@ -232,7 +232,7 @@ func CDCFlowWorkflow(
 	syncCtx, cancelSync := workflow.WithCancel(ctx)
 	syncCtx = workflow.WithActivityOptions(syncCtx, workflow.ActivityOptions{
 		StartToCloseTimeout: 365 * 24 * time.Hour, // Long-running
-		HeartbeatTimeout:    1 * time.Minute,
+		HeartbeatTimeout:    2 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 1, // Handle retries in the activity
 		},
