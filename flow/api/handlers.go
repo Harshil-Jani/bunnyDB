@@ -1778,34 +1778,46 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Peer CRUD
-	mux.HandleFunc("POST /v1/peers", corsMiddleware(h.CreatePeer))
-	mux.HandleFunc("GET /v1/peers", corsMiddleware(h.ListPeers))
-	mux.HandleFunc("GET /v1/peers/{name}", corsMiddleware(h.GetPeer))
-	mux.HandleFunc("PUT /v1/peers/{name}", corsMiddleware(h.UpdatePeer))
-	mux.HandleFunc("DELETE /v1/peers/{name}", corsMiddleware(h.DeletePeer))
-	mux.HandleFunc("POST /v1/peers/{name}/test", corsMiddleware(h.TestPeer))
-	mux.HandleFunc("GET /v1/peers/{name}/tables", corsMiddleware(h.GetPeerTables))
+	// Auth routes (open — no token required)
+	mux.HandleFunc("POST /v1/auth/login", h.open(h.Login))
 
-	// Mirror CRUD
-	mux.HandleFunc("POST /v1/mirrors", corsMiddleware(h.CreateMirror))
-	mux.HandleFunc("GET /v1/mirrors", corsMiddleware(h.ListMirrors))
-	mux.HandleFunc("GET /v1/mirrors/{name}", corsMiddleware(h.GetMirrorStatus))
-	mux.HandleFunc("DELETE /v1/mirrors/{name}", corsMiddleware(h.DeleteMirror))
+	// Auth routes (authenticated)
+	mux.HandleFunc("GET /v1/auth/me", h.authed(h.GetCurrentUser))
+	mux.HandleFunc("POST /v1/auth/change-password", h.authed(h.ChangePassword))
 
-	// Mirror control
-	mux.HandleFunc("POST /v1/mirrors/{name}/pause", corsMiddleware(h.PauseMirror))
-	mux.HandleFunc("POST /v1/mirrors/{name}/resume", corsMiddleware(h.ResumeMirror))
-	mux.HandleFunc("POST /v1/mirrors/{name}/resync", corsMiddleware(h.ResyncMirror))
-	mux.HandleFunc("POST /v1/mirrors/{name}/resync/{table}", corsMiddleware(h.ResyncMirror))
-	mux.HandleFunc("POST /v1/mirrors/{name}/retry", corsMiddleware(h.RetryMirror))
-	mux.HandleFunc("POST /v1/mirrors/{name}/sync-schema", corsMiddleware(h.SyncSchema))
-	mux.HandleFunc("GET /v1/mirrors/{name}/logs", corsMiddleware(h.GetMirrorLogs))
-	mux.HandleFunc("GET /v1/mirrors/{name}/tables", corsMiddleware(h.GetMirrorTables))
-	mux.HandleFunc("GET /v1/mirrors/{name}/available-tables", corsMiddleware(h.GetAvailableTables))
-	mux.HandleFunc("PUT /v1/mirrors/{name}/tables", corsMiddleware(h.UpdateMirrorTables))
+	// User management (admin only)
+	mux.HandleFunc("GET /v1/users", h.adminOnly(h.ListUsers))
+	mux.HandleFunc("POST /v1/users", h.adminOnly(h.CreateUser))
+	mux.HandleFunc("DELETE /v1/users/{username}", h.adminOnly(h.DeleteUser))
 
-	// Health check
+	// Peer CRUD — reads are authed, writes are admin
+	mux.HandleFunc("GET /v1/peers", h.authed(h.ListPeers))
+	mux.HandleFunc("GET /v1/peers/{name}", h.authed(h.GetPeer))
+	mux.HandleFunc("GET /v1/peers/{name}/tables", h.authed(h.GetPeerTables))
+	mux.HandleFunc("POST /v1/peers", h.adminOnly(h.CreatePeer))
+	mux.HandleFunc("PUT /v1/peers/{name}", h.adminOnly(h.UpdatePeer))
+	mux.HandleFunc("DELETE /v1/peers/{name}", h.adminOnly(h.DeletePeer))
+	mux.HandleFunc("POST /v1/peers/{name}/test", h.adminOnly(h.TestPeer))
+
+	// Mirror CRUD — reads are authed, writes are admin
+	mux.HandleFunc("GET /v1/mirrors", h.authed(h.ListMirrors))
+	mux.HandleFunc("GET /v1/mirrors/{name}", h.authed(h.GetMirrorStatus))
+	mux.HandleFunc("GET /v1/mirrors/{name}/logs", h.authed(h.GetMirrorLogs))
+	mux.HandleFunc("GET /v1/mirrors/{name}/tables", h.authed(h.GetMirrorTables))
+	mux.HandleFunc("GET /v1/mirrors/{name}/available-tables", h.authed(h.GetAvailableTables))
+	mux.HandleFunc("POST /v1/mirrors", h.adminOnly(h.CreateMirror))
+	mux.HandleFunc("DELETE /v1/mirrors/{name}", h.adminOnly(h.DeleteMirror))
+
+	// Mirror control (admin only)
+	mux.HandleFunc("POST /v1/mirrors/{name}/pause", h.adminOnly(h.PauseMirror))
+	mux.HandleFunc("POST /v1/mirrors/{name}/resume", h.adminOnly(h.ResumeMirror))
+	mux.HandleFunc("POST /v1/mirrors/{name}/resync", h.adminOnly(h.ResyncMirror))
+	mux.HandleFunc("POST /v1/mirrors/{name}/resync/{table}", h.adminOnly(h.ResyncMirror))
+	mux.HandleFunc("POST /v1/mirrors/{name}/retry", h.adminOnly(h.RetryMirror))
+	mux.HandleFunc("POST /v1/mirrors/{name}/sync-schema", h.adminOnly(h.SyncSchema))
+	mux.HandleFunc("PUT /v1/mirrors/{name}/tables", h.adminOnly(h.UpdateMirrorTables))
+
+	// Health check (open)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})

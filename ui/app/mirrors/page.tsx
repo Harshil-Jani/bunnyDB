@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Play, Pause, RefreshCw, Trash2, RotateCcw, Database, AlertCircle, Plus } from 'lucide-react';
 import { getStatusColor, getStatusIcon } from '../../lib/status';
+import { authFetch, isAdmin } from '../../lib/auth';
 
 interface Mirror {
   name: string;
@@ -24,16 +25,16 @@ interface TableStatus {
   last_synced_at?: string;
 }
 
-const API_URL = process.env.BUNNY_API_URL || 'http://localhost:8112';
-
 export default function Home() {
   const router = useRouter();
   const [mirrors, setMirrors] = useState<Mirror[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const admin = isAdmin();
+
   const fetchMirrors = async () => {
     try {
-      const res = await fetch(`${API_URL}/v1/mirrors`);
+      const res = await authFetch('/v1/mirrors');
       if (!res.ok) throw new Error('Failed to fetch mirrors');
       const data = await res.json();
       setMirrors(data || []);
@@ -47,7 +48,7 @@ export default function Home() {
 
   const performAction = async (name: string, action: string) => {
     try {
-      const res = await fetch(`${API_URL}/v1/mirrors/${name}/${action}`, {
+      const res = await authFetch(`/v1/mirrors/${name}/${action}`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error(`Failed to ${action} mirror`);
@@ -83,13 +84,15 @@ export default function Home() {
             <RefreshCw className="w-4 h-4" />
             Refresh
           </button>
-          <button
-            onClick={() => router.push('/mirrors/new')}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
-          >
-            <Plus className="w-4 h-4" />
-            Create Mirror
-          </button>
+          {admin && (
+            <button
+              onClick={() => router.push('/mirrors/new')}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+            >
+              <Plus className="w-4 h-4" />
+              Create Mirror
+            </button>
+          )}
         </div>
       </div>
 
@@ -105,13 +108,15 @@ export default function Home() {
           <Database className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No mirrors yet</h3>
           <p className="text-gray-500 dark:text-gray-400 mb-4">Create your first mirror to start replicating data.</p>
-          <button
-            onClick={() => router.push('/mirrors/new')}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
-          >
-            <Plus className="w-4 h-4" />
-            Create Mirror
-          </button>
+          {admin && (
+            <button
+              onClick={() => router.push('/mirrors/new')}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+            >
+              <Plus className="w-4 h-4" />
+              Create Mirror
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid gap-4">
@@ -144,40 +149,42 @@ export default function Home() {
                   </div>
                 )}
 
-                <div className="mt-4 flex gap-2">
-                  {!['PAUSED', 'PAUSING', 'TERMINATED', 'TERMINATING', 'FAILED'].includes(mirror.status?.toUpperCase()) && (
+                {admin && (
+                  <div className="mt-4 flex gap-2">
+                    {!['PAUSED', 'PAUSING', 'TERMINATED', 'TERMINATING', 'FAILED'].includes(mirror.status?.toUpperCase()) && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); performAction(mirror.name, 'pause'); }}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:hover:bg-yellow-900/50"
+                      >
+                        <Pause className="w-4 h-4" />
+                        Pause
+                      </button>
+                    )}
+                    {mirror.status?.toUpperCase() === 'PAUSED' && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); performAction(mirror.name, 'resume'); }}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
+                      >
+                        <Play className="w-4 h-4" />
+                        Resume
+                      </button>
+                    )}
                     <button
-                      onClick={(e) => { e.stopPropagation(); performAction(mirror.name, 'pause'); }}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:hover:bg-yellow-900/50"
+                      onClick={(e) => { e.stopPropagation(); performAction(mirror.name, 'retry'); }}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
                     >
-                      <Pause className="w-4 h-4" />
-                      Pause
+                      <RotateCcw className="w-4 h-4" />
+                      Retry Now
                     </button>
-                  )}
-                  {mirror.status?.toUpperCase() === 'PAUSED' && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); performAction(mirror.name, 'resume'); }}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
+                      onClick={(e) => { e.stopPropagation(); performAction(mirror.name, 'resync'); }}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:hover:bg-purple-900/50"
                     >
-                      <Play className="w-4 h-4" />
-                      Resume
+                      <RefreshCw className="w-4 h-4" />
+                      Resync
                     </button>
-                  )}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); performAction(mirror.name, 'retry'); }}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                    Retry Now
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); performAction(mirror.name, 'resync'); }}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:hover:bg-purple-900/50"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    Resync
-                  </button>
-                </div>
+                  </div>
+                )}
 
                 <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
                   <div>

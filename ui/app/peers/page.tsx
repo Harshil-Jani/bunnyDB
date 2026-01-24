@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Plus, Trash2, TestTube, Database, CheckCircle, XCircle, Loader2, Pencil } from 'lucide-react';
+import { authFetch, isAdmin } from '../../lib/auth';
 
 interface Peer {
   id: number;
@@ -18,8 +19,6 @@ interface TestResult {
   version?: string;
   error?: string;
 }
-
-const API_URL = process.env.BUNNY_API_URL || 'http://localhost:8112';
 
 const emptyFormData = {
   name: '',
@@ -41,9 +40,11 @@ export default function PeersPage() {
 
   const [formData, setFormData] = useState(emptyFormData);
 
+  const admin = isAdmin();
+
   const fetchPeers = async () => {
     try {
-      const res = await fetch(`${API_URL}/v1/peers`);
+      const res = await authFetch('/v1/peers');
       if (!res.ok) throw new Error('Failed to fetch peers');
       const data = await res.json();
       setPeers(data || []);
@@ -83,14 +84,13 @@ export default function PeersPage() {
   const savePeer = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const url = editingPeer
-        ? `${API_URL}/v1/peers/${editingPeer}`
-        : `${API_URL}/v1/peers`;
+      const endpoint = editingPeer
+        ? `/v1/peers/${editingPeer}`
+        : `/v1/peers`;
       const method = editingPeer ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await authFetch(endpoint, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       });
       if (!res.ok) throw new Error(`Failed to ${editingPeer ? 'update' : 'create'} peer`);
@@ -104,7 +104,7 @@ export default function PeersPage() {
   const deletePeer = async (name: string) => {
     if (!confirm(`Are you sure you want to delete peer "${name}"?`)) return;
     try {
-      const res = await fetch(`${API_URL}/v1/peers/${name}`, {
+      const res = await authFetch(`/v1/peers/${name}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Failed to delete peer');
@@ -117,7 +117,7 @@ export default function PeersPage() {
   const testPeer = async (name: string) => {
     setTesting(prev => ({ ...prev, [name]: true }));
     try {
-      const res = await fetch(`${API_URL}/v1/peers/${name}/test`, {
+      const res = await authFetch(`/v1/peers/${name}/test`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to test peer');
@@ -149,13 +149,15 @@ export default function PeersPage() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Peers</h1>
-        <button
-          onClick={openCreateForm}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
-        >
-          <Plus className="w-4 h-4" />
-          Add Peer
-        </button>
+        {admin && (
+          <button
+            onClick={openCreateForm}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+          >
+            <Plus className="w-4 h-4" />
+            Add Peer
+          </button>
+        )}
       </div>
 
       {/* Add/Edit Peer Form */}
@@ -296,34 +298,36 @@ export default function PeersPage() {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => testPeer(peer.name)}
-                    disabled={testing[peer.name]}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
-                  >
-                    {testing[peer.name] ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <TestTube className="w-4 h-4" />
-                    )}
-                    Test
-                  </button>
-                  <button
-                    onClick={() => openEditForm(peer)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
-                  >
-                    <Pencil className="w-4 h-4" />
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => deletePeer(peer.name)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Delete
-                  </button>
-                </div>
+                {admin && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => testPeer(peer.name)}
+                      disabled={testing[peer.name]}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
+                    >
+                      {testing[peer.name] ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <TestTube className="w-4 h-4" />
+                      )}
+                      Test
+                    </button>
+                    <button
+                      onClick={() => openEditForm(peer)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
+                    >
+                      <Pencil className="w-4 h-4" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => deletePeer(peer.name)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </button>
+                  </div>
+                )}
               </div>
 
               {testResults[peer.name] && (

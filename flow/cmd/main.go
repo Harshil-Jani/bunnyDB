@@ -71,6 +71,10 @@ func main() {
 func runAPI(config *shared.Config, catalogPool *pgxpool.Pool, temporalClient client.Client) {
 	slog.Info("starting BunnyDB API server")
 
+	// Ensure auth tables exist and seed admin user
+	api.EnsureUsersTable(catalogPool)
+	api.SeedAdmin(catalogPool, config)
+
 	handler := api.NewHandler(temporalClient, catalogPool, config)
 
 	mux := http.NewServeMux()

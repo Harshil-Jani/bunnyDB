@@ -11,6 +11,11 @@ x-temporal-config: &temporal-config
   TEMPORAL_HOST_PORT: temporal:7233
   TEMPORAL_NAMESPACE: default
 
+x-auth-config: &auth-config
+  BUNNY_JWT_SECRET: change-me-in-production-use-a-random-string
+  BUNNY_ADMIN_USER: admin
+  BUNNY_ADMIN_PASSWORD: admin
+
 services:
   catalog:
     container_name: bunny-catalog
@@ -80,7 +85,7 @@ services:
       - 8112:8112
       - 8113:8113
     environment:
-      <<: [*catalog-config, *temporal-config]
+      <<: [*catalog-config, *temporal-config, *auth-config]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

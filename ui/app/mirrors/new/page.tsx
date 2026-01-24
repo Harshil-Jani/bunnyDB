@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Plus, Trash2, Loader2, Database, ArrowRight, Search, CheckSquare, Square, RefreshCw } from 'lucide-react';
+import { authFetch } from '../../../lib/auth';
 
 interface Peer {
   id: number;
@@ -24,8 +25,6 @@ interface TableMapping {
   destination_schema: string;
   destination_table: string;
 }
-
-const API_URL = process.env.BUNNY_API_URL || 'http://localhost:8112';
 
 export default function NewMirrorPage() {
   const router = useRouter();
@@ -57,7 +56,7 @@ export default function NewMirrorPage() {
 
   const fetchPeers = async () => {
     try {
-      const res = await fetch(`${API_URL}/v1/peers`);
+      const res = await authFetch('/v1/peers');
       if (!res.ok) throw new Error('Failed to fetch peers');
       const data = await res.json();
       setPeers(data || []);
@@ -76,7 +75,7 @@ export default function NewMirrorPage() {
 
     setLoadingTables(true);
     try {
-      const res = await fetch(`${API_URL}/v1/peers/${peerName}/tables`);
+      const res = await authFetch(`/v1/peers/${peerName}/tables`);
       if (!res.ok) throw new Error('Failed to fetch tables');
       const data = await res.json();
       setSourceTables(data || []);
@@ -224,9 +223,8 @@ export default function NewMirrorPage() {
 
     setCreating(true);
     try {
-      const res = await fetch(`${API_URL}/v1/mirrors`, {
+      const res = await authFetch('/v1/mirrors', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
           table_mappings: tableMappings,

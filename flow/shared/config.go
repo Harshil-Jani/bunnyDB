@@ -1,7 +1,10 @@
 package shared
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 )
@@ -21,6 +24,11 @@ type Config struct {
 
 	// Worker settings
 	WorkerTaskQueue string
+
+	// Auth
+	JWTSecret     string
+	AdminUser     string
+	AdminPassword string
 }
 
 // LoadConfig loads configuration from environment variables
@@ -34,6 +42,17 @@ func LoadConfig() (*Config, error) {
 		TemporalHostPort:  getEnvOrDefault("TEMPORAL_HOST_PORT", "localhost:7233"),
 		TemporalNamespace: getEnvOrDefault("TEMPORAL_NAMESPACE", "default"),
 		WorkerTaskQueue:   getEnvOrDefault("BUNNY_WORKER_TASK_QUEUE", "bunny-worker"),
+		JWTSecret:         getEnvOrDefault("BUNNY_JWT_SECRET", ""),
+		AdminUser:         getEnvOrDefault("BUNNY_ADMIN_USER", "admin"),
+		AdminPassword:     getEnvOrDefault("BUNNY_ADMIN_PASSWORD", ""),
+	}
+
+	// Generate a random JWT secret if not provided
+	if config.JWTSecret == "" {
+		b := make([]byte, 32)
+		rand.Read(b)
+		config.JWTSecret = hex.EncodeToString(b)
+		slog.Warn("BUNNY_JWT_SECRET not set, generated random secret (tokens will not survive restart)")
 	}
 
 	return config, nil

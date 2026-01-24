@@ -158,6 +158,15 @@ CREATE TABLE IF NOT EXISTS bunny_stats.mirror_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Users table: stores authentication credentials
+CREATE TABLE IF NOT EXISTS bunny_internal.users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(255) UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'readonly', -- 'admin' or 'readonly'
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_table_mappings_mirror ON bunny_internal.table_mappings(mirror_id);
 CREATE INDEX IF NOT EXISTS idx_cdc_batches_mirror ON bunny_stats.cdc_batches(mirror_name);

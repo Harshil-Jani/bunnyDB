@@ -26,6 +26,7 @@ import {
   Info,
 } from 'lucide-react';
 import { getStatusColor, getStatusIcon, getLogEventCategory, getEventCategoryColor, getEventCategoryBadge, getEventCategoryIcon, getEventCategoryFilterColor, LOG_EVENT_CATEGORIES, LogEventCategory } from '../../../lib/status';
+import { authFetch, isAdmin } from '../../../lib/auth';
 
 interface LogEntry {
   id: number;
@@ -66,12 +67,11 @@ interface TableMapping {
   exclude_columns?: string[];
 }
 
-const API_URL = process.env.BUNNY_API_URL || 'http://localhost:8112';
-
 export default function MirrorDetailPage() {
   const params = useParams();
   const router = useRouter();
   const mirrorName = params.name as string;
+  const admin = isAdmin();
 
   const [mirror, setMirror] = useState<MirrorDetails | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -100,7 +100,7 @@ export default function MirrorDetailPage() {
 
   const fetchMirrorDetails = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}`);
+      const res = await authFetch(`/v1/mirrors/${mirrorName}`);
       if (!res.ok) {
         if (res.status === 404) {
           setError('Mirror not found');
@@ -131,7 +131,7 @@ export default function MirrorDetailPage() {
       });
       if (logSearch) params.set('search', logSearch);
 
-      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/logs?${params}`);
+      const res = await authFetch(`/v1/mirrors/${mirrorName}/logs?${params}`);
       if (res.ok) {
         const data = await res.json();
         const newLogs = data.logs || [];
@@ -159,10 +159,10 @@ export default function MirrorDetailPage() {
     setActionLoading(actionKey);
     setActionError(null);
     try {
-      const url = tableName
-        ? `${API_URL}/v1/mirrors/${mirrorName}/${action}/${tableName}`
-        : `${API_URL}/v1/mirrors/${mirrorName}/${action}`;
-      const res = await fetch(url, { method: 'POST' });
+      const endpoint = tableName
+        ? `/v1/mirrors/${mirrorName}/${action}/${tableName}`
+        : `/v1/mirrors/${mirrorName}/${action}`;
+      const res = await authFetch(endpoint, { method: 'POST' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         if (res.status === 409) {
@@ -184,7 +184,7 @@ export default function MirrorDetailPage() {
   const deleteMirror = async () => {
     setActionLoading('delete');
     try {
-      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}`, {
+      const res = await authFetch(`/v1/mirrors/${mirrorName}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Failed to delete mirror');
@@ -197,7 +197,7 @@ export default function MirrorDetailPage() {
 
   const fetchAllTables = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/tables`);
+      const res = await authFetch(`/v1/mirrors/${mirrorName}/tables`);
       if (res.ok) {
         const data = await res.json();
         if (data.tables && data.tables.length > 0) {
@@ -212,7 +212,7 @@ export default function MirrorDetailPage() {
   const fetchAvailableTables = useCallback(async () => {
     setLoadingAvailableTables(true);
     try {
-      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/available-tables`);
+      const res = await authFetch(`/v1/mirrors/${mirrorName}/available-tables`);
       if (res.ok) {
         const data = await res.json();
         setAvailableTables(data || []);
@@ -262,7 +262,7 @@ export default function MirrorDetailPage() {
 
   const fetchTableMappings = async () => {
     try {
-      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/tables`);
+      const res = await authFetch(`/v1/mirrors/${mirrorName}/tables`);
       if (res.ok) {
         const data = await res.json();
         if (data.config?.table_mappings && data.config.table_mappings.length > 0) {
@@ -362,9 +362,8 @@ export default function MirrorDetailPage() {
     setSavingTables(true);
     setTableEditorError(null);
     try {
-      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/tables`, {
+      const res = await authFetch(`/v1/mirrors/${mirrorName}/tables`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ table_mappings: tableMappings }),
       });
       if (!res.ok) {
@@ -470,7 +469,7 @@ export default function MirrorDetailPage() {
             </button>
           </div>
         )}
-        <div className="flex flex-wrap gap-2">
+        {admin && <div className="flex flex-wrap gap-2">
           {!['PAUSED', 'PAUSING', 'TERMINATED', 'TERMINATING', 'FAILED'].includes(mirror.status?.toUpperCase()) && (
             <div className="relative group/pause">
               <button
@@ -593,7 +592,7 @@ export default function MirrorDetailPage() {
               <div className="absolute top-full right-4 border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"></div>
             </div>
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* Stats */}
@@ -718,22 +717,24 @@ export default function MirrorDetailPage() {
                           <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(table.status)}`}>
                             {table.status}
                           </span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              performAction('resync', table.table_name);
-                            }}
-                            disabled={actionLoading === `resync-${table.table_name}`}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50 dark:bg-purple-900/30 dark:text-purple-400 dark:hover:bg-purple-900/50"
-                            title="Resync this table"
-                          >
-                            {actionLoading === `resync-${table.table_name}` ? (
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <RefreshCw className="w-3 h-3" />
-                            )}
-                            Resync
-                          </button>
+                          {admin && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                performAction('resync', table.table_name);
+                              }}
+                              disabled={actionLoading === `resync-${table.table_name}`}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 disabled:opacity-50 dark:bg-purple-900/30 dark:text-purple-400 dark:hover:bg-purple-900/50"
+                              title="Resync this table"
+                            >
+                              {actionLoading === `resync-${table.table_name}` ? (
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <RefreshCw className="w-3 h-3" />
+                              )}
+                              Resync
+                            </button>
+                          )}
                         </div>
                       </div>
                       {expandedTables.has(table.table_name) && (
