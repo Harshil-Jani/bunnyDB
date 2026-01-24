@@ -23,6 +23,7 @@ import {
   X,
   Save,
   Search,
+  Info,
 } from 'lucide-react';
 import { getStatusColor, getStatusIcon, getLogLevelColor, getLogLevelIcon } from '../../../lib/status';
 
@@ -430,87 +431,143 @@ export default function MirrorDetailPage() {
             </button>
           </div>
         )}
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {!['PAUSED', 'PAUSING', 'TERMINATED', 'TERMINATING', 'FAILED'].includes(mirror.status?.toUpperCase()) && (
-            <button
-              onClick={() => performAction('pause')}
-              disabled={actionLoading === 'pause'}
-              className="flex items-center gap-2 px-4 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 disabled:opacity-50 dark:bg-yellow-900/30 dark:text-yellow-400 dark:hover:bg-yellow-900/50"
-            >
-              {actionLoading === 'pause' ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <Pause className="w-4 h-4" />
-              )}
-              Pause Mirror
-            </button>
+            <div className="border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 bg-yellow-50/50 dark:bg-yellow-900/10">
+              <button
+                onClick={() => performAction('pause')}
+                disabled={actionLoading === 'pause'}
+                className="flex items-center gap-2 px-4 py-2 w-full bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 disabled:opacity-50 dark:bg-yellow-900/30 dark:text-yellow-400 dark:hover:bg-yellow-900/50 font-medium"
+              >
+                {actionLoading === 'pause' ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Pause className="w-4 h-4" />
+                )}
+                Pause Mirror
+              </button>
+              <div className="mt-2 flex items-start gap-1.5 px-1">
+                <Info className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-500 mt-0.5 flex-shrink-0" />
+                <p className="text-xs text-gray-600 dark:text-gray-400">
+                  Stops CDC replication without dropping the replication slot. Changes on the source accumulate in the WAL and will be replayed when resumed. No data loss.
+                </p>
+              </div>
+            </div>
           )}
           {mirror.status?.toUpperCase() === 'PAUSED' && (
             <>
-              <button
-                onClick={() => performAction('resume')}
-                disabled={actionLoading === 'resume'}
-                className="flex items-center gap-2 px-4 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
-              >
-                {actionLoading === 'resume' ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Play className="w-4 h-4" />
-                )}
-                Resume Mirror
-              </button>
-              <button
-                onClick={openTableEditor}
-                className="flex items-center gap-2 px-4 py-2 bg-cyan-100 text-cyan-700 rounded-lg hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400 dark:hover:bg-cyan-900/50"
-              >
-                <Settings className="w-4 h-4" />
-                Edit Tables
-              </button>
+              <div className="border border-green-200 dark:border-green-800 rounded-lg p-3 bg-green-50/50 dark:bg-green-900/10">
+                <button
+                  onClick={() => performAction('resume')}
+                  disabled={actionLoading === 'resume'}
+                  className="flex items-center gap-2 px-4 py-2 w-full bg-green-100 text-green-700 rounded-lg hover:bg-green-200 disabled:opacity-50 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50 font-medium"
+                >
+                  {actionLoading === 'resume' ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Play className="w-4 h-4" />
+                  )}
+                  Resume Mirror
+                </button>
+                <div className="mt-2 flex items-start gap-1.5 px-1">
+                  <Info className="w-3.5 h-3.5 text-green-600 dark:text-green-500 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-gray-600 dark:text-gray-400">
+                    Resumes CDC replication from where it left off. All accumulated WAL changes will be replayed to catch up the destination.
+                  </p>
+                </div>
+              </div>
+              <div className="border border-cyan-200 dark:border-cyan-800 rounded-lg p-3 bg-cyan-50/50 dark:bg-cyan-900/10">
+                <button
+                  onClick={openTableEditor}
+                  className="flex items-center gap-2 px-4 py-2 w-full bg-cyan-100 text-cyan-700 rounded-lg hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400 dark:hover:bg-cyan-900/50 font-medium"
+                >
+                  <Settings className="w-4 h-4" />
+                  Edit Tables
+                </button>
+                <div className="mt-2 flex items-start gap-1.5 px-1">
+                  <Info className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-500 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-gray-600 dark:text-gray-400">
+                    Add or remove tables from this mirror while it is paused. Changes take effect on resume.
+                  </p>
+                </div>
+              </div>
             </>
           )}
-          <button
-            onClick={() => performAction('retry')}
-            disabled={actionLoading === 'retry'}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 disabled:opacity-50 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
-          >
-            {actionLoading === 'retry' ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <RotateCcw className="w-4 h-4" />
-            )}
-            Retry Now
-          </button>
-          <button
-            onClick={() => performAction('resync')}
-            disabled={actionLoading === 'resync'}
-            className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 disabled:opacity-50 dark:bg-purple-900/30 dark:text-purple-400 dark:hover:bg-purple-900/50"
-          >
-            {actionLoading === 'resync' ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
-            )}
-            Full Resync
-          </button>
-          <button
-            onClick={() => performAction('sync-schema')}
-            disabled={actionLoading === 'sync-schema'}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 disabled:opacity-50 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50"
-          >
-            {actionLoading === 'sync-schema' ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <Settings className="w-4 h-4" />
-            )}
-            Sync Schema
-          </button>
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 ml-auto dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
-          >
-            <Trash2 className="w-4 h-4" />
-            Delete Mirror
-          </button>
+          <div className="border border-blue-200 dark:border-blue-800 rounded-lg p-3 bg-blue-50/50 dark:bg-blue-900/10">
+            <button
+              onClick={() => performAction('retry')}
+              disabled={actionLoading === 'retry'}
+              className="flex items-center gap-2 px-4 py-2 w-full bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 disabled:opacity-50 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 font-medium"
+            >
+              {actionLoading === 'retry' ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <RotateCcw className="w-4 h-4" />
+              )}
+              Retry Now
+            </button>
+            <div className="mt-2 flex items-start gap-1.5 px-1">
+              <Info className="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                Bypasses the error backoff timer and immediately restarts CDC. Drops the replication slot and creates a fresh connection. Use when the underlying issue is fixed.
+              </p>
+            </div>
+          </div>
+          <div className="border border-purple-200 dark:border-purple-800 rounded-lg p-3 bg-purple-50/50 dark:bg-purple-900/10">
+            <button
+              onClick={() => performAction('resync')}
+              disabled={actionLoading === 'resync'}
+              className="flex items-center gap-2 px-4 py-2 w-full bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 disabled:opacity-50 dark:bg-purple-900/30 dark:text-purple-400 dark:hover:bg-purple-900/50 font-medium"
+            >
+              {actionLoading === 'resync' ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              Full Resync
+            </button>
+            <div className="mt-2 flex items-start gap-1.5 px-1">
+              <Info className="w-3.5 h-3.5 text-purple-600 dark:text-purple-500 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                Re-copies all table data from source to destination. Uses the swap strategy: creates shadow tables, copies data, then atomically renames them into place for zero downtime. Resets the replication slot after completion.
+              </p>
+            </div>
+          </div>
+          <div className="border border-indigo-200 dark:border-indigo-800 rounded-lg p-3 bg-indigo-50/50 dark:bg-indigo-900/10">
+            <button
+              onClick={() => performAction('sync-schema')}
+              disabled={actionLoading === 'sync-schema'}
+              className="flex items-center gap-2 px-4 py-2 w-full bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 disabled:opacity-50 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50 font-medium"
+            >
+              {actionLoading === 'sync-schema' ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Settings className="w-4 h-4" />
+              )}
+              Sync Schema
+            </button>
+            <div className="mt-2 flex items-start gap-1.5 px-1">
+              <Info className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-500 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                Compares source and destination table schemas, then applies DDL changes (new columns, type alterations) to the destination. Restarts CDC to pick up the new column definitions. Does not re-copy data.
+              </p>
+            </div>
+          </div>
+          <div className="border border-red-200 dark:border-red-800 rounded-lg p-3 bg-red-50/50 dark:bg-red-900/10">
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="flex items-center gap-2 px-4 py-2 w-full bg-red-100 text-red-700 rounded-lg hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 font-medium"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete Mirror
+            </button>
+            <div className="mt-2 flex items-start gap-1.5 px-1">
+              <Info className="w-3.5 h-3.5 text-red-600 dark:text-red-500 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                Permanently removes this mirror. Drops the replication slot and publication on the source. Destination tables are kept intact.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
