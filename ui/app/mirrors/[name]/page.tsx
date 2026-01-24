@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -118,10 +118,13 @@ export default function MirrorDetailPage() {
     }
   }, [mirrorName]);
 
+  const logsOffsetRef = useRef(logsOffset);
+  logsOffsetRef.current = logsOffset;
+
   const fetchLogs = useCallback(async (append = false, overrideOffset?: number) => {
     setLogsLoading(true);
     try {
-      const currentOffset = overrideOffset ?? (append ? logsOffset : 0);
+      const currentOffset = overrideOffset ?? (append ? logsOffsetRef.current : 0);
       const params = new URLSearchParams({
         limit: String(LOGS_PAGE_SIZE),
         offset: String(currentOffset),
@@ -138,14 +141,16 @@ export default function MirrorDetailPage() {
           setLogs(newLogs);
         }
         setLogsTotal(data.total || 0);
-        setLogsOffset(currentOffset + newLogs.length);
+        const newOffset = currentOffset + newLogs.length;
+        setLogsOffset(newOffset);
+        logsOffsetRef.current = newOffset;
       }
     } catch (err) {
       console.error('Failed to fetch logs:', err);
     } finally {
       setLogsLoading(false);
     }
-  }, [mirrorName, logSearch, logsOffset]);
+  }, [mirrorName, logSearch]);
 
   const [actionError, setActionError] = useState<string | null>(null);
 
