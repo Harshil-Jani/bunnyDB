@@ -89,26 +89,13 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 		return fmt.Errorf("failed to truncate table: %w", err)
 	}
 
-	// Step 4: Get current snapshot from source
-	var snapshotName string
-	err = workflow.ExecuteActivity(ctx, activities.ExportSnapshotActivity, &activities.ExportSnapshotInput{
-		MirrorName: input.MirrorName,
-		SourcePeer: input.SourcePeer,
-	}).Get(ctx, &snapshotName)
-	if err != nil {
-		// If we can't get a snapshot, copy without one (less consistent but works)
-		logger.Warn("failed to get snapshot, copying without snapshot isolation", slog.Any("error", err))
-		snapshotName = ""
-	}
-
-	// Step 5: Copy table data
+	// Step 4: Copy table data
 	logger.Info("copying table data", slog.String("table", input.TableName))
 	err = workflow.ExecuteActivity(ctx, activities.CopyTableActivity, &activities.CopyTableInput{
 		MirrorName:      input.MirrorName,
 		SourcePeer:      input.SourcePeer,
 		DestinationPeer: input.DestinationPeer,
 		TableMapping:    *tableMapping,
-		SnapshotName:    snapshotName,
 	}).Get(ctx, nil)
 	if err != nil {
 		// Mark as error and continue with CDC
@@ -158,16 +145,19 @@ func TableResyncWorkflow(ctx workflow.Context, input *TableResyncInput) error {
 		logger.Warn("failed to update table status", slog.Any("error", err))
 	}
 
-	// Step 9: Resume CDC flow
-	logger.Info("table resync completed, resuming CDC",
+	// Step 9: Drop replication slot to release the old connection, then restart CDC fresh
+	logger.Info("table resync completed, dropping slot for clean restart",
 		slog.String("mirror", input.MirrorName),
 		slog.String("table", input.TableName))
 
-	// Clear the resync state and continue as new with CDC
 	input.CDCState.ActiveSignal = model.NoopSignal
 	input.CDCState.ResyncTableName = ""
 
-	return workflow.NewContinueAsNewError(ctx, CDCFlowWorkflow, input.CDCInput, input.CDCState)
+	return workflow.NewContinueAsNewError(ctx, DropFlowWorkflow, &DropFlowInput{
+		MirrorName: input.MirrorName,
+		IsResync:   true,
+		Config:     input.CDCInput,
+	})
 }
 
 // tableResyncSwap performs zero-downtime table resync by creating a _resync shadow table,
@@ -196,18 +186,7 @@ func tableResyncSwap(ctx workflow.Context, input *TableResyncInput, tableMapping
 		return fmt.Errorf("failed to create resync table: %w", err)
 	}
 
-	// Step 3: Export snapshot from source for consistent copy
-	var snapshotName string
-	err = workflow.ExecuteActivity(ctx, activities.ExportSnapshotActivity, &activities.ExportSnapshotInput{
-		MirrorName: input.MirrorName,
-		SourcePeer: input.SourcePeer,
-	}).Get(ctx, &snapshotName)
-	if err != nil {
-		logger.Warn("failed to get snapshot, copying without snapshot isolation", slog.Any("error", err))
-		snapshotName = ""
-	}
-
-	// Step 4: Copy data into _resync table (use modified mapping with _resync suffix)
+	// Step 3: Copy data into _resync table (use modified mapping with _resync suffix)
 	resyncMapping := *tableMapping
 	resyncMapping.DestinationTable = tableMapping.DestinationTable + "_resync"
 
@@ -219,7 +198,6 @@ func tableResyncSwap(ctx workflow.Context, input *TableResyncInput, tableMapping
 		SourcePeer:      input.SourcePeer,
 		DestinationPeer: input.DestinationPeer,
 		TableMapping:    resyncMapping,
-		SnapshotName:    snapshotName,
 	}).Get(ctx, nil)
 	if err != nil {
 		// Cleanup: drop the resync table on failure
@@ -285,15 +263,19 @@ func tableResyncSwap(ctx workflow.Context, input *TableResyncInput, tableMapping
 		logger.Warn("failed to update table status after swap", slog.Any("error", err))
 	}
 
-	// Step 8: Resume CDC
-	logger.Info("table swap resync completed, resuming CDC",
+	// Step 8: Drop replication slot to release the old connection, then restart CDC fresh
+	logger.Info("table swap resync completed, dropping slot for clean restart",
 		slog.String("mirror", input.MirrorName),
 		slog.String("table", input.TableName))
 
 	input.CDCState.ActiveSignal = model.NoopSignal
 	input.CDCState.ResyncTableName = ""
 
-	return workflow.NewContinueAsNewError(ctx, CDCFlowWorkflow, input.CDCInput, input.CDCState)
+	return workflow.NewContinueAsNewError(ctx, DropFlowWorkflow, &DropFlowInput{
+		MirrorName: input.MirrorName,
+		IsResync:   true,
+		Config:     input.CDCInput,
+	})
 }
 
 // FullSwapResyncInput is the input for the full-mirror swap resync workflow
@@ -337,18 +319,7 @@ func FullSwapResyncWorkflow(ctx workflow.Context, input *FullSwapResyncInput) er
 		}
 	}
 
-	// Phase 2: Export snapshot for consistent copy across all tables
-	var snapshotName string
-	err := workflow.ExecuteActivity(ctx, activities.ExportSnapshotActivity, &activities.ExportSnapshotInput{
-		MirrorName: input.MirrorName,
-		SourcePeer: input.SourcePeer,
-	}).Get(ctx, &snapshotName)
-	if err != nil {
-		logger.Warn("failed to get snapshot, copying without snapshot isolation", slog.Any("error", err))
-		snapshotName = ""
-	}
-
-	// Phase 3: Copy data into all _resync tables
+	// Phase 2: Copy data into all _resync tables
 	for _, tm := range input.TableMappings {
 		resyncMapping := tm
 		resyncMapping.DestinationTable = tm.DestinationTable + "_resync"
@@ -359,7 +330,6 @@ func FullSwapResyncWorkflow(ctx workflow.Context, input *FullSwapResyncInput) er
 			SourcePeer:      input.SourcePeer,
 			DestinationPeer: input.DestinationPeer,
 			TableMapping:    resyncMapping,
-			SnapshotName:    snapshotName,
 		}).Get(ctx, nil)
 		if err != nil {
 			// Cleanup all resync tables on failure
@@ -374,7 +344,7 @@ func FullSwapResyncWorkflow(ctx workflow.Context, input *FullSwapResyncInput) er
 		}
 	}
 
-	// Phase 4: Create indexes on all _resync tables
+	// Phase 3: Create indexes on all _resync tables
 	for _, tm := range input.TableMappings {
 		resyncMapping := tm
 		resyncMapping.DestinationTable = tm.DestinationTable + "_resync"
@@ -392,7 +362,7 @@ func FullSwapResyncWorkflow(ctx workflow.Context, input *FullSwapResyncInput) er
 		}
 	}
 
-	// Phase 5: Swap all tables atomically (one by one — each swap is atomic per table)
+	// Phase 4: Swap all tables atomically (one by one — each swap is atomic per table)
 	for _, tm := range input.TableMappings {
 		logger.Info("swapping table", slog.String("table", tm.FullDestinationName()))
 		err := workflow.ExecuteActivity(ctx, activities.SwapTablesActivity, &activities.SwapTablesInput{
@@ -407,16 +377,16 @@ func FullSwapResyncWorkflow(ctx workflow.Context, input *FullSwapResyncInput) er
 		}
 	}
 
-	// Phase 6: Drop replication slot and publication (will be recreated by CDC)
+	// Phase 5: Drop replication slot and publication (will be recreated by CDC)
 	logger.Info("dropping source replication for fresh restart")
-	err = workflow.ExecuteActivity(ctx, activities.DropSourceReplicationActivity, &activities.DropSourceInput{
+	err := workflow.ExecuteActivity(ctx, activities.DropSourceReplicationActivity, &activities.DropSourceInput{
 		MirrorName: input.MirrorName,
 	}).Get(ctx, nil)
 	if err != nil {
 		logger.Warn("failed to drop source replication", slog.Any("error", err))
 	}
 
-	// Phase 7: Cleanup catalog (partial — reset LSN so CDC starts fresh)
+	// Phase 6: Cleanup catalog (partial — reset LSN so CDC starts fresh)
 	err = workflow.ExecuteActivity(ctx, activities.CleanupCatalogActivity, &activities.CleanupCatalogInput{
 		MirrorName: input.MirrorName,
 		FullClean:  false,
@@ -425,7 +395,7 @@ func FullSwapResyncWorkflow(ctx workflow.Context, input *FullSwapResyncInput) er
 		logger.Warn("failed to cleanup catalog", slog.Any("error", err))
 	}
 
-	// Phase 8: Restart CDC from scratch (fresh state, new slot)
+	// Phase 7: Restart CDC from scratch (fresh state, new slot)
 	logger.Info("full swap resync complete, restarting CDC")
 	return workflow.NewContinueAsNewError(ctx, CDCFlowWorkflow, input.CDCInput, nil)
 }
