@@ -151,7 +151,7 @@ export const getEventCategoryColor = (category: LogEventCategory) => {
     case 'snapshot':
       return 'bg-sky-50 border-l-sky-500 dark:bg-sky-950/30 dark:border-l-sky-400';
     case 'user_action':
-      return 'bg-amber-50 border-l-amber-500 dark:bg-amber-950/30 dark:border-l-amber-400';
+      return 'bg-orange-50 border-l-orange-500 dark:bg-orange-950/40 dark:border-l-orange-400';
     case 'error':
       return 'bg-red-50 border-l-red-500 dark:bg-red-950/30 dark:border-l-red-400';
   }
@@ -170,7 +170,7 @@ export const getEventCategoryBadge = (category: LogEventCategory) => {
     case 'snapshot':
       return 'bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300';
     case 'user_action':
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300';
+      return 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300';
     case 'error':
       return 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300';
   }
@@ -189,7 +189,7 @@ export const getEventCategoryIcon = (category: LogEventCategory) => {
     case 'snapshot':
       return <Database className="w-4 h-4 text-sky-500 flex-shrink-0" />;
     case 'user_action':
-      return <User className="w-4 h-4 text-amber-500 flex-shrink-0" />;
+      return <User className="w-4 h-4 text-orange-500 dark:text-orange-400 flex-shrink-0" />;
     case 'error':
       return <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />;
   }
@@ -209,7 +209,7 @@ export const getEventCategoryFilterColor = (category: LogEventCategory, active: 
     case 'snapshot':
       return 'bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300';
     case 'user_action':
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300';
+      return 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300';
     case 'error':
       return 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300';
   }
