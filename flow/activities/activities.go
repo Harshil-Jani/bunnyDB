@@ -919,7 +919,9 @@ func (a *Activities) DropSourceReplication(ctx context.Context, input *DropSourc
 			WHERE mirror_name = $1
 		`, input.MirrorName).Scan(&slotName, &publicationName)
 		if err != nil {
-			return fmt.Errorf("failed to get mirror state: %w", err)
+			// Mirror not found in catalog at all — already cleaned up, nothing to drop
+			logger.Warn("mirror not found in catalog, skipping replication cleanup", slog.Any("error", err))
+			return nil
 		}
 		// Without source peer, we can't drop - just log and continue
 		logger.Warn("no source peer found, skipping replication slot/publication cleanup")

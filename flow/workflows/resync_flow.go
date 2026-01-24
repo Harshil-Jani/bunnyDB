@@ -397,6 +397,7 @@ func FullSwapResyncWorkflow(ctx workflow.Context, input *FullSwapResyncInput) er
 
 	// Phase 7: Restart CDC from scratch (fresh state, new slot)
 	logger.Info("full swap resync complete, restarting CDC")
+	input.CDCInput.DoInitialSnapshot = false
 	return workflow.NewContinueAsNewError(ctx, CDCFlowWorkflow, input.CDCInput, nil)
 }
 
@@ -455,6 +456,8 @@ func DropFlowWorkflow(ctx workflow.Context, input *DropFlowInput) error {
 	// If resync, restart the CDC flow
 	if input.IsResync && input.Config != nil {
 		logger.Info("drop complete, restarting CDC for resync")
+		// Don't redo initial snapshot on restart — only copy data fresh via CDC
+		input.Config.DoInitialSnapshot = false
 		return workflow.NewContinueAsNewError(ctx, CDCFlowWorkflow, input.Config, nil)
 	}
 
