@@ -392,13 +392,13 @@ export default function LandingPage() {
       </section>
 
       {/* Take Interactive Tour — prominent CTA above demo */}
-      <section className="max-w-5xl mx-auto px-6 pb-6">
+      <section className="max-w-4xl mx-auto px-6 pb-4">
         <button
           onClick={() => {
             localStorage.removeItem('bunny_tour_seen');
             router.push('/mirrors');
           }}
-          className="inline-flex items-center gap-2.5 px-6 py-3 bg-bunny-50 dark:bg-bunny-950/30 border-2 border-bunny-200 dark:border-bunny-800 text-bunny-700 dark:text-bunny-400 text-sm font-semibold rounded-xl hover:bg-bunny-100 dark:hover:bg-bunny-950/50 hover:border-bunny-300 dark:hover:border-bunny-700 transition-all shadow-sm"
+          className="w-full flex items-center justify-center gap-2.5 px-6 py-3.5 bg-bunny-50 dark:bg-bunny-950/30 border-2 border-bunny-200 dark:border-bunny-800 text-bunny-700 dark:text-bunny-400 text-sm font-semibold rounded-xl hover:bg-bunny-100 dark:hover:bg-bunny-950/50 hover:border-bunny-300 dark:hover:border-bunny-700 transition-all shadow-sm"
         >
           <MousePointer className="w-4 h-4" />
           Take the Interactive Tour
