@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Database, ArrowDown, MousePointer, CheckCircle, Play, Pause, RefreshCw, FileText } from 'lucide-react';
+import { ArrowRight, Database, ArrowDown, MousePointer, CheckCircle, Play, Pause, RefreshCw, FileText, LogIn, LogOut } from 'lucide-react';
 import { BunnyLogo } from '../components/BunnyLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
+import { getToken, getUser, logout, AuthUser } from '../lib/auth';
 
 const screens = [
   { id: 'peers', label: 'Add Peers', route: 'peers' },
@@ -315,20 +316,55 @@ function DemoAnimation() {
 
 export default function LandingPage() {
   const router = useRouter();
+  const [user, setUser] = useState<AuthUser | null>(null);
+
+  useEffect(() => {
+    setUser(getUser());
+  }, []);
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-950">
-      {/* Nav */}
-      <nav className="sticky top-0 z-50 bg-white/80 dark:bg-gray-950/80 backdrop-blur-sm border-b border-gray-100 dark:border-gray-900">
-        <div className="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2.5">
-            <BunnyLogo size={26} />
-            <span className="text-[15px] font-semibold text-gray-900 dark:text-white">BunnyDB</span>
-          </a>
-          <div className="flex items-center gap-6">
-            <a href="/mirrors" className="text-[13px] text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors">Mirrors</a>
-            <a href="/peers" className="text-[13px] text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors">Peers</a>
-            <ThemeToggle />
+      {/* Nav — consistent with app header */}
+      <nav className="sticky top-0 z-50 bg-white dark:bg-gray-900 shadow-sm dark:shadow-gray-900/20 border-b border-gray-200 dark:border-gray-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex items-center">
+              <a href="/" className="flex items-center">
+                <BunnyLogo size={28} />
+                <span className="ml-2 text-xl font-bold text-gray-900 dark:text-white">BunnyDB</span>
+              </a>
+            </div>
+            <div className="flex items-center space-x-4">
+              <a href="/mirrors" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Mirrors</a>
+              <a href="/peers" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Peers</a>
+              <a href="/settings" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Settings</a>
+              <ThemeToggle />
+              {user ? (
+                <div className="flex items-center gap-3 ml-2 pl-4 border-l border-gray-200 dark:border-gray-700">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    {user.username}
+                    <span className="ml-1 text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                      ({user.role})
+                    </span>
+                  </span>
+                  <button
+                    onClick={logout}
+                    className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    title="Sign out"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <a
+                  href="/login"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
+                >
+                  <LogIn className="w-4 h-4" />
+                  Login
+                </a>
+              )}
+            </div>
           </div>
         </div>
       </nav>
@@ -351,18 +387,23 @@ export default function LandingPage() {
               Open Dashboard
               <ArrowRight className="w-4 h-4" />
             </button>
-            <button
-              onClick={() => {
-                localStorage.removeItem('bunny_tour_seen');
-                router.push('/mirrors');
-              }}
-              className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-            >
-              <MousePointer className="w-3.5 h-3.5" />
-              Take Interactive Tour
-            </button>
           </div>
         </div>
+      </section>
+
+      {/* Take Interactive Tour — prominent CTA above demo */}
+      <section className="max-w-5xl mx-auto px-6 pb-6">
+        <button
+          onClick={() => {
+            localStorage.removeItem('bunny_tour_seen');
+            router.push('/mirrors');
+          }}
+          className="inline-flex items-center gap-2.5 px-6 py-3 bg-bunny-50 dark:bg-bunny-950/30 border-2 border-bunny-200 dark:border-bunny-800 text-bunny-700 dark:text-bunny-400 text-sm font-semibold rounded-xl hover:bg-bunny-100 dark:hover:bg-bunny-950/50 hover:border-bunny-300 dark:hover:border-bunny-700 transition-all shadow-sm"
+        >
+          <MousePointer className="w-4 h-4" />
+          Take the Interactive Tour
+          <ArrowRight className="w-4 h-4" />
+        </button>
       </section>
 
       {/* Live Interactive Demo — top of page for maximum visibility */}
