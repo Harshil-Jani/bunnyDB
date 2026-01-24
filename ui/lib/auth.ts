@@ -34,17 +34,21 @@ export function isAdmin(): boolean {
   return user?.role === 'admin';
 }
 
-export async function authFetch(endpoint: string, options?: RequestInit): Promise<Response> {
+export async function authFetch(
+  endpoint: string,
+  options?: RequestInit & { skipAuthRedirect?: boolean }
+): Promise<Response> {
   const token = getToken();
+  const { skipAuthRedirect, ...fetchOptions } = options || {};
   const res = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
+    ...fetchOptions,
     headers: {
       'Content-Type': 'application/json',
       ...(token && { 'Authorization': `Bearer ${token}` }),
-      ...options?.headers,
+      ...fetchOptions?.headers,
     },
   });
-  if (res.status === 401) {
+  if (res.status === 401 && !skipAuthRedirect) {
     clearToken();
     window.location.href = '/login';
   }

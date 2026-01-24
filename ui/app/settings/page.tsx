@@ -109,9 +109,13 @@ export default function SettingsPage() {
       const res = await authFetch('/v1/auth/change-password', {
         method: 'POST',
         body: JSON.stringify(passwordData),
+        skipAuthRedirect: true,
       });
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 401) {
+          throw new Error('Current password is incorrect');
+        }
         throw new Error(data.error || 'Failed to change password');
       }
       setPasswordSuccess('Password updated successfully');
