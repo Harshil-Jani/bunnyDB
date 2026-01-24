@@ -25,7 +25,7 @@ import {
   Search,
   Info,
 } from 'lucide-react';
-import { getStatusColor, getStatusIcon, getLogLevelColor, getLogLevelIcon } from '../../../lib/status';
+import { getStatusColor, getStatusIcon, getLogLevelColor, getLogLevelBadge, getLogLevelIcon } from '../../../lib/status';
 
 interface LogEntry {
   id: number;
@@ -75,6 +75,12 @@ export default function MirrorDetailPage() {
 
   const [mirror, setMirror] = useState<MirrorDetails | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logsTotal, setLogsTotal] = useState(0);
+  const [logsOffset, setLogsOffset] = useState(0);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logSearch, setLogSearch] = useState('');
+  const [logSearchInput, setLogSearchInput] = useState('');
+  const [logLevelFilter, setLogLevelFilter] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -90,6 +96,7 @@ export default function MirrorDetailPage() {
   const [allTables, setAllTables] = useState<TableStatus[]>([]);
   const [availableTables, setAvailableTables] = useState<{ schema: string; table_name: string }[]>([]);
   const [loadingAvailableTables, setLoadingAvailableTables] = useState(false);
+  const LOGS_PAGE_SIZE = 50;
 
   const fetchMirrorDetails = useCallback(async () => {
     try {
@@ -111,17 +118,35 @@ export default function MirrorDetailPage() {
     }
   }, [mirrorName]);
 
-  const fetchLogs = useCallback(async () => {
+  const fetchLogs = useCallback(async (append = false, overrideOffset?: number) => {
+    setLogsLoading(true);
     try {
-      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/logs?limit=100`);
+      const currentOffset = overrideOffset ?? (append ? logsOffset : 0);
+      const params = new URLSearchParams({
+        limit: String(LOGS_PAGE_SIZE),
+        offset: String(currentOffset),
+      });
+      if (logSearch) params.set('search', logSearch);
+      if (logLevelFilter) params.set('level', logLevelFilter);
+
+      const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/logs?${params}`);
       if (res.ok) {
         const data = await res.json();
-        setLogs(data || []);
+        const newLogs = data.logs || [];
+        if (append) {
+          setLogs(prev => [...prev, ...newLogs]);
+        } else {
+          setLogs(newLogs);
+        }
+        setLogsTotal(data.total || 0);
+        setLogsOffset(currentOffset + newLogs.length);
       }
     } catch (err) {
       console.error('Failed to fetch logs:', err);
+    } finally {
+      setLogsLoading(false);
     }
-  }, [mirrorName]);
+  }, [mirrorName, logSearch, logLevelFilter, logsOffset]);
 
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -200,14 +225,19 @@ export default function MirrorDetailPage() {
     fetchLogs();
     fetchAllTables();
     const mirrorInterval = setInterval(fetchMirrorDetails, 5000);
-    const logsInterval = setInterval(fetchLogs, 10000);
     const tablesInterval = setInterval(fetchAllTables, 10000);
     return () => {
       clearInterval(mirrorInterval);
-      clearInterval(logsInterval);
       clearInterval(tablesInterval);
     };
   }, [fetchMirrorDetails, fetchLogs, fetchAllTables]);
+
+  // Re-fetch logs when search or filter changes (reset to page 1)
+  useEffect(() => {
+    setLogs([]);
+    setLogsOffset(0);
+    fetchLogs(false, 0);
+  }, [logSearch, logLevelFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleTableExpanded = (tableName: string) => {
     setExpandedTables((prev) => {
@@ -612,7 +642,7 @@ export default function MirrorDetailPage() {
               </div>
             </button>
             <button
-              onClick={() => { setActiveTab('logs'); fetchLogs(); }}
+              onClick={() => { setActiveTab('logs'); setLogs([]); setLogsOffset(0); fetchLogs(false, 0); }}
               className={`px-6 py-4 text-sm font-medium border-b-2 ${
                 activeTab === 'logs'
                   ? 'border-blue-500 text-blue-600'
@@ -621,7 +651,7 @@ export default function MirrorDetailPage() {
             >
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4" />
-                Logs ({logs.length})
+                Logs {logsTotal > 0 && <span className="text-xs bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-full">{logsTotal}</span>}
               </div>
             </button>
           </nav>
@@ -755,41 +785,126 @@ export default function MirrorDetailPage() {
 
         {/* Logs Tab */}
         {activeTab === 'logs' && (
-          <div className="divide-y dark:divide-gray-700 max-h-[600px] overflow-y-auto">
-            {logs.length > 0 ? (
-              logs.map((log) => (
-                <div key={log.id} className={`p-4 ${getLogLevelColor(log.level)} border-l-4`}>
-                  <div className="flex items-start gap-3">
-                    {getLogLevelIcon(log.level)}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="font-medium text-gray-900 dark:text-white">{log.message}</span>
-                        <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                          {formatDate(log.created_at)}
-                        </span>
-                      </div>
-                      {log.details && (
-                        <pre className="mt-2 text-xs text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-800 bg-opacity-50 dark:bg-opacity-50 rounded p-2 overflow-x-auto">
-                          {(() => {
-                            try {
-                              return JSON.stringify(JSON.parse(log.details), null, 2);
-                            } catch {
-                              return log.details;
-                            }
-                          })()}
-                        </pre>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="p-8 text-center text-gray-500 dark:text-gray-400">
-                <FileText className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600 mb-3" />
-                <p>No logs available yet.</p>
-                <p className="text-sm mt-1">Logs will appear as the mirror performs operations.</p>
+          <div>
+            {/* Search and Filter Bar */}
+            <div className="p-4 border-b dark:border-gray-700 flex flex-wrap items-center gap-3">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search logs..."
+                  value={logSearchInput}
+                  onChange={(e) => setLogSearchInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') setLogSearch(logSearchInput); }}
+                  className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                />
               </div>
-            )}
+              {logSearchInput && logSearch !== logSearchInput && (
+                <button
+                  onClick={() => setLogSearch(logSearchInput)}
+                  className="px-3 py-2 text-xs bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400"
+                >
+                  Search
+                </button>
+              )}
+              {logSearch && (
+                <button
+                  onClick={() => { setLogSearch(''); setLogSearchInput(''); }}
+                  className="px-3 py-2 text-xs bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300"
+                >
+                  Clear
+                </button>
+              )}
+              <div className="flex items-center gap-1">
+                {['', 'INFO', 'WARN', 'ERROR'].map((lvl) => (
+                  <button
+                    key={lvl}
+                    onClick={() => setLogLevelFilter(lvl)}
+                    className={`px-2.5 py-1.5 text-xs rounded-md font-medium transition-colors ${
+                      logLevelFilter === lvl
+                        ? lvl === 'ERROR' ? 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
+                          : lvl === 'WARN' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300'
+                          : lvl === 'INFO' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
+                          : 'bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-white'
+                        : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'
+                    }`}
+                  >
+                    {lvl || 'All'}
+                  </button>
+                ))}
+              </div>
+              <span className="text-xs text-gray-500 dark:text-gray-400 ml-auto">
+                {logs.length} of {logsTotal}
+              </span>
+            </div>
+
+            {/* Log Entries */}
+            <div className="max-h-[600px] overflow-y-auto">
+              {logs.length > 0 ? (
+                <>
+                  {logs.map((log) => (
+                    <div key={log.id} className={`px-4 py-3 border-l-4 border-b dark:border-b-gray-700/50 ${getLogLevelColor(log.level)}`}>
+                      <div className="flex items-start gap-3">
+                        {getLogLevelIcon(log.level)}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${getLogLevelBadge(log.level)}`}>
+                              {log.level}
+                            </span>
+                            <span className="font-medium text-sm text-gray-900 dark:text-white">{log.message}</span>
+                            <span className="text-xs text-gray-400 dark:text-gray-500 ml-auto whitespace-nowrap">
+                              {formatDate(log.created_at)}
+                            </span>
+                          </div>
+                          {log.details && (
+                            <pre className="mt-1.5 text-xs text-gray-600 dark:text-gray-300 bg-white/60 dark:bg-gray-900/40 rounded p-2 overflow-x-auto font-mono">
+                              {(() => {
+                                try {
+                                  return JSON.stringify(JSON.parse(log.details), null, 2);
+                                } catch {
+                                  return log.details;
+                                }
+                              })()}
+                            </pre>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Load More */}
+                  {logs.length < logsTotal && (
+                    <div className="p-4 text-center">
+                      <button
+                        onClick={() => fetchLogs(true)}
+                        disabled={logsLoading}
+                        className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                      >
+                        {logsLoading ? 'Loading...' : `Load More (${logsTotal - logs.length} remaining)`}
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="p-8 text-center text-gray-500 dark:text-gray-400">
+                  {logsLoading ? (
+                    <RefreshCw className="w-8 h-8 mx-auto text-gray-300 dark:text-gray-600 mb-3 animate-spin" />
+                  ) : (
+                    <>
+                      <FileText className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600 mb-3" />
+                      {logSearch || logLevelFilter ? (
+                        <p>No logs matching your filters.</p>
+                      ) : (
+                        <>
+                          <p>No logs available yet.</p>
+                          <p className="text-sm mt-1">Logs will appear as the mirror performs operations.</p>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

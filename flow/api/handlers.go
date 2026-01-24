@@ -1636,8 +1636,8 @@ func (h *Handler) GetMirrorLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get limit from query params (default 100)
-	limit := 100
+	// Parse query params
+	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := fmt.Sscanf(l, "%d", &limit); err == nil && parsed > 0 {
 			if limit > 500 {
@@ -1646,13 +1646,55 @@ func (h *Handler) GetMirrorLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := h.CatalogPool.Query(ctx, `
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+		if offset < 0 {
+			offset = 0
+		}
+	}
+
+	search := r.URL.Query().Get("search")
+	level := r.URL.Query().Get("level")
+
+	// Build WHERE clause dynamically
+	where := "WHERE mirror_name = $1"
+	args := []interface{}{mirrorName}
+	argIdx := 2
+
+	if level != "" {
+		where += fmt.Sprintf(" AND log_level = $%d", argIdx)
+		args = append(args, level)
+		argIdx++
+	}
+
+	if search != "" {
+		where += fmt.Sprintf(" AND (message ILIKE $%d OR details::text ILIKE $%d)", argIdx, argIdx)
+		args = append(args, "%"+search+"%")
+		argIdx++
+	}
+
+	// Get total count for pagination
+	var total int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM bunny_stats.mirror_logs %s", where)
+	err := h.CatalogPool.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		slog.Error("failed to count logs", slog.Any("error", err))
+		writeError(w, http.StatusInternalServerError, "failed to fetch logs")
+		return
+	}
+
+	// Fetch page of logs
+	dataQuery := fmt.Sprintf(`
 		SELECT id, log_level, message, details::text, created_at
 		FROM bunny_stats.mirror_logs
-		WHERE mirror_name = $1
+		%s
 		ORDER BY created_at DESC
-		LIMIT $2
-	`, mirrorName, limit)
+		LIMIT $%d OFFSET $%d
+	`, where, argIdx, argIdx+1)
+	args = append(args, limit, offset)
+
+	rows, err := h.CatalogPool.Query(ctx, dataQuery, args...)
 	if err != nil {
 		slog.Error("failed to fetch logs", slog.Any("error", err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch logs")
@@ -1671,7 +1713,12 @@ func (h *Handler) GetMirrorLogs(w http.ResponseWriter, r *http.Request) {
 		logs = append(logs, log)
 	}
 
-	writeJSON(w, http.StatusOK, logs)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"logs":   logs,
+		"total":  total,
+		"offset": offset,
+		"limit":  limit,
+	})
 }
 
 // WriteMirrorLog writes a log entry for a mirror (internal helper)
