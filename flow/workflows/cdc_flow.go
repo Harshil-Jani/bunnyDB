@@ -445,8 +445,33 @@ func CDCFlowWorkflow(
 			slog.Any("error", syncErr),
 			slog.Duration("backoff", backoff))
 
-		// Sleep for backoff duration
-		_ = workflow.Sleep(ctx, backoff)
+		// Sleep for backoff duration, but allow retry-now signal to interrupt it
+		timerCtx, cancelTimer := workflow.WithCancel(ctx)
+		timerFuture := workflow.NewTimer(timerCtx, backoff)
+
+		backoffSelector := workflow.NewSelector(ctx)
+		backoffSelector.AddFuture(timerFuture, func(f workflow.Future) {
+			// Timer completed naturally
+		})
+		backoffSelector.AddReceive(retryNowChan, func(c workflow.ReceiveChannel, more bool) {
+			var payload model.SignalPayload
+			c.Receive(ctx, &payload)
+			state.ActiveSignal = model.RetryNowSignal
+			state.ClearError()
+			cancelTimer()
+			logger.Info("received retry-now signal during backoff, bypassing wait")
+		})
+		backoffSelector.Select(ctx)
+
+		// If retry-now was received during backoff, go through DropFlowWorkflow for clean restart
+		if state.ActiveSignal == model.RetryNowSignal {
+			state.ActiveSignal = model.NoopSignal
+			return state, workflow.NewContinueAsNewError(ctx, DropFlowWorkflow, &DropFlowInput{
+				MirrorName: input.MirrorName,
+				IsResync:   true,
+				Config:     input,
+			})
+		}
 	}
 
 	// Continue as new for the next iteration
