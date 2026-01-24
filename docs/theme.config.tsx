@@ -1,9 +1,11 @@
 import { DocsThemeConfig } from 'nextra-theme-docs'
 
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ''
+
 const config: DocsThemeConfig = {
   logo: (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-      <img src="/bunny-logo.svg" alt="BunnyDB" width={28} height={28} />
+      <img src={`${basePath}/bunny-logo.svg`} alt="BunnyDB" width={28} height={28} />
       <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>BunnyDB</span>
     </div>
   ),
@@ -23,7 +25,7 @@ const config: DocsThemeConfig = {
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <meta name="description" content="BunnyDB — Fast, focused PostgreSQL-to-PostgreSQL CDC replication" />
       <meta name="og:title" content="BunnyDB Documentation" />
-      <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      <link rel="icon" href={`${basePath}/favicon.svg`} type="image/svg+xml" />
     </>
   ),
   color: {

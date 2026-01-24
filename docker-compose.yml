@@ -129,6 +129,7 @@ services:
 
   bunny-docs:
     container_name: bunny-docs
+    profiles: ["docs"]
     build:
       context: ./docs
       dockerfile: Dockerfile
@@ -136,8 +137,9 @@ services:
     ports:
       - 3001:3001
 
-  # Test databases for sanity testing
+  # Test databases for development
   source-db:
+    profiles: ["dev"]
     container_name: bunny-source-db
     image: postgres:16-alpine
     command: -c config_file=/etc/postgresql.conf
@@ -159,6 +161,7 @@ services:
       start_period: 30s
 
   dest-db:
+    profiles: ["dev"]
     container_name: bunny-dest-db
     image: postgres:16-alpine
     restart: unless-stopped

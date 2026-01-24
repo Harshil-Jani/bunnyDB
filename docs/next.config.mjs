@@ -1,5 +1,7 @@
 import nextra from 'nextra'
 
+const isGHPages = process.env.DEPLOY_TARGET === 'ghpages'
+
 const withNextra = nextra({
   theme: 'nextra-theme-docs',
   themeConfig: './theme.config.tsx',
@@ -7,8 +9,10 @@ const withNextra = nextra({
 })
 
 export default withNextra({
-  output: 'standalone',
+  output: isGHPages ? 'export' : 'standalone',
+  basePath: isGHPages ? '/bunnyDB/docs' : '',
   images: {
     unoptimized: true,
   },
+  trailingSlash: isGHPages ? true : undefined,
 })

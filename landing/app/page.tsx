@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { ArrowRight, Database, ArrowDown, MousePointer, CheckCircle, Play, Pause, RefreshCw, FileText, LogIn, LogOut, BookOpen } from 'lucide-react';
+import { ArrowRight, Database, ArrowDown, CheckCircle, Play, Pause, RefreshCw, FileText, Github, BookOpen } from 'lucide-react';
 import { BunnyLogo } from '../components/BunnyLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
-import { getToken, getUser, logout, AuthUser } from '../lib/auth';
+
+const basePath = '/bunnyDB';
 
 const screens = [
   { id: 'peers', label: 'Add Peers', route: 'peers' },
@@ -315,59 +315,36 @@ function DemoAnimation() {
 }
 
 export default function LandingPage() {
-  const router = useRouter();
-  const [user, setUser] = useState<AuthUser | null>(null);
-
-  useEffect(() => {
-    setUser(getUser());
-  }, []);
-
   return (
     <div className="min-h-screen bg-white dark:bg-gray-950">
-      {/* Nav — consistent with app header */}
+      {/* Nav */}
       <nav className="sticky top-0 z-50 bg-white dark:bg-gray-900 shadow-sm dark:shadow-gray-900/20 border-b border-gray-200 dark:border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
-              <a href="/" className="flex items-center">
+              <a href={basePath} className="flex items-center">
                 <BunnyLogo size={28} />
                 <span className="ml-2 text-xl font-bold text-gray-900 dark:text-white">BunnyDB</span>
               </a>
             </div>
             <div className="flex items-center space-x-4">
-              <a href="/mirrors" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Mirrors</a>
-              <a href="/peers" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Peers</a>
-              <a href="/settings" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Settings</a>
-              <a href="http://localhost:3001" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">
+              <a
+                href="https://github.com/Harshil-Jani/bunnyDB"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+              >
+                <Github className="w-4 h-4" />
+                GitHub
+              </a>
+              <a
+                href={`${basePath}/docs`}
+                className="flex items-center gap-1 text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white"
+              >
                 <BookOpen className="w-4 h-4" />
                 Docs
               </a>
               <ThemeToggle />
-              {user ? (
-                <div className="flex items-center gap-3 ml-2 pl-4 border-l border-gray-200 dark:border-gray-700">
-                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                    {user.username}
-                    <span className="ml-1 text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                      ({user.role})
-                    </span>
-                  </span>
-                  <button
-                    onClick={logout}
-                    className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    title="Sign out"
-                  >
-                    <LogOut className="w-4 h-4" />
-                  </button>
-                </div>
-              ) : (
-                <a
-                  href="/login"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
-                >
-                  <LogIn className="w-4 h-4" />
-                  Login
-                </a>
-              )}
             </div>
           </div>
         </div>
@@ -392,38 +369,29 @@ export default function LandingPage() {
             Point, click, replicate. No configuration files, no CLI gymnastics.
           </p>
           <div className="mt-8 flex items-center gap-4">
-            <button
-              onClick={() => router.push('/mirrors')}
+            <a
+              href={`${basePath}/docs/quickstart`}
               className="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
             >
-              Open Dashboard
+              Get Started
               <ArrowRight className="w-4 h-4" />
-            </button>
+            </a>
+            <a
+              href={`${basePath}/docs`}
+              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
+            >
+              Read the Docs
+            </a>
           </div>
         </div>
       </section>
 
-      {/* Take Interactive Tour — prominent CTA above demo */}
-      <section className="max-w-4xl mx-auto px-6 pb-4">
-        <button
-          onClick={() => {
-            localStorage.removeItem('bunny_tour_seen');
-            router.push('/mirrors');
-          }}
-          className="w-full flex items-center justify-center gap-2.5 px-6 py-3.5 bg-bunny-50 dark:bg-bunny-950/30 border-2 border-bunny-200 dark:border-bunny-800 text-bunny-700 dark:text-bunny-400 text-sm font-semibold rounded-xl hover:bg-bunny-100 dark:hover:bg-bunny-950/50 hover:border-bunny-300 dark:hover:border-bunny-700 transition-all shadow-sm"
-        >
-          <MousePointer className="w-4 h-4" />
-          Take the Interactive Tour
-          <ArrowRight className="w-4 h-4" />
-        </button>
-      </section>
-
-      {/* Live Interactive Demo — top of page for maximum visibility */}
+      {/* Live Interactive Demo */}
       <section className="max-w-5xl mx-auto px-6 pb-20">
         <DemoAnimation />
       </section>
 
-      {/* What BunnyDB does — single clear section */}
+      {/* What BunnyDB does */}
       <section className="border-t border-gray-100 dark:border-gray-900">
         <div className="max-w-5xl mx-auto px-6 py-20">
           <div className="grid md:grid-cols-3 gap-12">
@@ -460,7 +428,7 @@ export default function LandingPage() {
         <div className="max-w-5xl mx-auto px-6 py-20">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-12">How it works</h2>
 
-          {/* Architecture flow — clean, no gradients */}
+          {/* Architecture flow */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 sm:gap-0 max-w-2xl mx-auto mb-16">
             <div className="flex flex-col items-center gap-2">
               <div className="w-14 h-14 rounded-xl border border-gray-200 dark:border-gray-800 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -534,7 +502,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Features — compact list, no cards */}
+      {/* Features */}
       <section className="border-t border-gray-100 dark:border-gray-900 bg-gray-50 dark:bg-gray-900/50">
         <div className="max-w-5xl mx-auto px-6 py-20">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-10">Built for production</h2>
@@ -562,33 +530,32 @@ export default function LandingPage() {
         </div>
       </section>
 
-
-
-
       {/* CTA */}
       <section className="border-t border-gray-100 dark:border-gray-900">
         <div className="max-w-5xl mx-auto px-6 py-20 text-center">
           <p className="text-lg text-gray-900 dark:text-white font-medium">
-            Your BunnyDB instance is running.
+            Ready to get started?
           </p>
           <p className="mt-1.5 text-sm text-gray-500 dark:text-gray-400">
-            Start by adding peer connections, then create your first mirror.
+            Follow our quickstart guide to set up BunnyDB and create your first mirror.
           </p>
           <div className="mt-6 flex items-center justify-center gap-4">
-            <button
-              onClick={() => router.push('/peers')}
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
-            >
-              <Database className="w-4 h-4" />
-              Add Peers
-            </button>
-            <button
-              onClick={() => router.push('/mirrors')}
+            <a
+              href={`${basePath}/docs/quickstart`}
               className="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
             >
-              Create Mirror
+              View Quickstart
               <ArrowRight className="w-4 h-4" />
-            </button>
+            </a>
+            <a
+              href="https://github.com/Harshil-Jani/bunnyDB"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
+            >
+              <Github className="w-4 h-4" />
+              Star on GitHub
+            </a>
           </div>
         </div>
       </section>

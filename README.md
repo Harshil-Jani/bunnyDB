@@ -1,98 +1,191 @@
-# BunnyDB
+<p align="center">
+  <img src="ui/public/favicon.svg" width="80" alt="BunnyDB" />
+</p>
 
-**Fast, focused PostgreSQL-to-PostgreSQL replication with enhanced schema, index, and foreign key handling.**
+<h1 align="center">BunnyDB</h1>
 
-BunnyDB is derived from [PeerDB](https://github.com/PeerDB-io/peerdb) with a specialized focus on Postgres-to-Postgres replication, adding features like:
+<p align="center">
+  <strong>Fast, focused PostgreSQL-to-PostgreSQL CDC replication.</strong>
+</p>
 
-- **Schema Replication**: User-configurable DDL sync (columns, types, defaults)
-- **Index Replication**: Automatically replicate all index types
-- **Foreign Key Handling**: Deferred FK strategy for consistent replication
-- **Table-Level Resync**: Resync individual tables without full mirror restart
-- **On-Demand Retry**: Bypass Temporal's backoff circuit for immediate retries
+<p align="center">
+  <img src="https://img.shields.io/badge/deployment-self--hosted-blue" alt="Self-Hosted" />
+  <img src="https://img.shields.io/badge/cloud-coming%20soon-yellow" alt="Cloud Coming Soon" />
+  <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License" />
+</p>
 
-## Quick Start
+<p align="center">
+  <a href="https://harshil-jani.github.io/bunnyDB/docs">Documentation</a> &middot;
+  <a href="https://harshil-jani.github.io/bunnyDB/docs/quickstart">Quickstart</a> &middot;
+  <a href="https://harshil-jani.github.io/bunnyDB/docs/api-reference">API Reference</a>
+</p>
 
-```bash
-# Clone and start
-git clone <repo>
-cd bunnyDB
+---
 
-# Start all services
-docker-compose up -d
+## What is BunnyDB?
 
-# Check status
-docker-compose ps
-```
+BunnyDB is a self-hosted PostgreSQL-to-PostgreSQL replication tool built on Change Data Capture (CDC). It handles the hard parts of database replication — schema changes, indexes, foreign keys, and table-level resyncs — so you don't have to.
+
+> **Self-Hosted**: Run on your EC2 instances, local servers, or any Docker host. You own your data, your infrastructure, your uptime.
+>
+> **Cloud Coming Soon**: We're running a pilot to validate demand. If this tool is useful to you, a managed cloud version will follow.
+
+## Key Features
+
+- **CDC Replication** — Real-time streaming via PostgreSQL logical replication
+- **Schema Sync** — On-demand DDL sync (columns, types, defaults, constraints)
+- **Index Replication** — All index types: B-tree, Hash, GIN, GiST, SP-GiST, BRIN
+- **Foreign Key Handling** — Deferred FK strategy for batch consistency
+- **Table-Level Resync** — Resync individual tables without mirror restart
+- **Zero-Downtime Swap Resync** — Shadow table + atomic rename for production safety
+- **Pause / Resume** — Full control over replication lifecycle
+- **On-Demand Retry** — Skip Temporal's backoff circuit for immediate retries
+- **User Management & RBAC** — Admin and viewer roles with JWT auth
+- **Web UI** — Monitor mirrors, manage peers, control replication visually
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        BunnyDB Stack                            │
+│                         BunnyDB Stack                           │
 ├─────────────────────────────────────────────────────────────────┤
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
-│  │ bunny-ui │  │ bunny-api│  │ temporal │  │ temporal-ui      │ │
-│  │  :3000   │  │  :8112   │  │  :7233   │  │  :8085           │ │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────────────────┘ │
-│       │             │             │                              │
-│       └─────────────┼─────────────┘                              │
-│                     │                                            │
-│  ┌──────────────────┴───────────────────┐                       │
-│  │           bunny-worker               │                       │
-│  │  (Temporal Worker + CDC Engine)      │                       │
-│  └──────────────────┬───────────────────┘                       │
-│                     │                                            │
-│  ┌──────────────────┴───────────────────┐                       │
-│  │             catalog                   │                       │
-│  │         (PostgreSQL :5432)            │                       │
-│  └───────────────────────────────────────┘                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
+│  │ bunny-ui │  │ bunny-api│  │ temporal │  │ temporal-ui   │  │
+│  │  :3000   │  │  :8112   │  │  :7233   │  │  :8085        │  │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───────────────┘  │
+│       │              │              │                            │
+│       └──────────────┼──────────────┘                            │
+│                      │                                           │
+│  ┌───────────────────┴────────────────────┐                     │
+│  │            bunny-worker                │                     │
+│  │   (Temporal Worker + CDC Engine)       │                     │
+│  └───────────────────┬────────────────────┘                     │
+│                      │                                           │
+│  ┌───────────────────┴────────────────────┐                     │
+│  │              catalog                    │                     │
+│  │          (PostgreSQL :5432)             │                     │
+│  └─────────────────────────────────────────┘                     │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+## Installation
+
+### Prerequisites
+
+- Docker & Docker Compose
+- A PostgreSQL source database with `wal_level = logical`
+
+### Quick Start (Core)
+
+```bash
+git clone https://github.com/Harshil-Jani/bunnyDB.git
+cd bunnyDB
+docker compose up -d
+```
+
+This starts the core services: catalog, temporal, API, worker, and UI.
+
+- **UI**: http://localhost:3000
+- **API**: http://localhost:8112
+- **Temporal UI**: http://localhost:8085
+
+Default login: `admin` / `admin`
+
+### Full Setup (with local docs)
+
+```bash
+docker compose --profile docs up -d
+```
+
+Adds a local documentation server at http://localhost:3001.
+
+### Development Setup (with test databases)
+
+```bash
+docker compose --profile dev up -d
+```
+
+Adds source and destination test databases for development/testing.
+
+### All Services
+
+```bash
+docker compose --profile docs --profile dev up -d
+```
+
+## Quick Usage
+
+```bash
+# 1. Login
+TOKEN=$(curl -s -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin"}' | jq -r '.token')
+
+# 2. Create source peer
+curl -X POST http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my_source",
+    "host": "host.docker.internal",
+    "port": 5432,
+    "user": "postgres",
+    "password": "your_password",
+    "database": "source_db"
+  }'
+
+# 3. Create destination peer
+curl -X POST http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my_dest",
+    "host": "host.docker.internal",
+    "port": 5433,
+    "user": "postgres",
+    "password": "your_password",
+    "database": "dest_db"
+  }'
+
+# 4. Create mirror
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my_mirror",
+    "source_peer": "my_source",
+    "destination_peer": "my_dest",
+    "do_initial_snapshot": true,
+    "table_mappings": [
+      {"source_table": "public.users", "destination_table": "public.users"}
+    ]
+  }'
+
+# 5. Check status
+curl http://localhost:8112/v1/mirrors/my_mirror \
+  -H "Authorization: Bearer $TOKEN" | jq '.status'
 ```
 
 ## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| POST | `/v1/auth/login` | Authenticate and get JWT token |
+| POST | `/v1/peers` | Create a peer connection |
+| GET | `/v1/peers/:name/tables` | List tables on a peer |
 | POST | `/v1/mirrors` | Create a new mirror |
 | GET | `/v1/mirrors/:name` | Get mirror status |
-| POST | `/v1/mirrors/:name/pause` | Pause mirror |
-| POST | `/v1/mirrors/:name/resume` | Resume mirror |
-| DELETE | `/v1/mirrors/:name` | Drop mirror |
-| POST | `/v1/mirrors/:name/resync` | Full resync |
+| POST | `/v1/mirrors/:name/pause` | Pause replication |
+| POST | `/v1/mirrors/:name/resume` | Resume replication |
+| POST | `/v1/mirrors/:name/resync` | Full mirror resync |
 | POST | `/v1/mirrors/:name/resync/:table` | Table-level resync |
-| POST | `/v1/mirrors/:name/retry` | On-demand retry (skip backoff) |
-| GET | `/v1/mirrors/:name/schema-diff` | Show pending schema changes |
-| POST | `/v1/mirrors/:name/sync-schema` | Apply schema/index/FK changes |
+| POST | `/v1/mirrors/:name/retry` | Immediate retry (skip backoff) |
+| POST | `/v1/mirrors/:name/sync-schema` | Apply schema changes |
+| DELETE | `/v1/mirrors/:name` | Drop mirror |
 
-## Key Features
-
-### 1. Index Replication
-Automatically replicates all indexes from source to destination:
-- B-tree, Hash, GIN, GiST, SP-GiST, BRIN
-- Unique constraints
-- Partial indexes
-- Expression indexes
-
-### 2. Foreign Key Handling (Deferred Strategy)
-1. **Initial Sync**: FKs dropped before sync, recreated after
-2. **CDC**: Uses `DEFERRABLE INITIALLY DEFERRED` for batch consistency
-3. **Validation**: FKs validated when recreated
-
-### 3. Table-Level Resync
-Resync individual tables without disrupting the entire mirror:
-```bash
-curl -X POST http://localhost:8112/v1/mirrors/my_mirror/resync/public.users
-```
-
-### 4. On-Demand Retry
-Skip Temporal's exponential backoff for immediate retry:
-```bash
-curl -X POST http://localhost:8112/v1/mirrors/my_mirror/retry
-```
+For complete API documentation, see the [API Reference](https://harshil-jani.github.io/bunnyDB/docs/api-reference).
 
 ## Configuration
-
-### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -100,22 +193,49 @@ curl -X POST http://localhost:8112/v1/mirrors/my_mirror/retry
 | `BUNNY_CATALOG_PORT` | Catalog database port | `5432` |
 | `BUNNY_CATALOG_USER` | Catalog database user | `postgres` |
 | `BUNNY_CATALOG_PASSWORD` | Catalog database password | `bunnydb` |
+| `BUNNY_CATALOG_DATABASE` | Catalog database name | `bunnydb` |
 | `TEMPORAL_HOST_PORT` | Temporal server address | `temporal:7233` |
+| `BUNNY_JWT_SECRET` | JWT signing secret | `change-me-in-production` |
+| `BUNNY_ADMIN_USER` | Default admin username | `admin` |
+| `BUNNY_ADMIN_PASSWORD` | Default admin password | `admin` |
 
-## Development
+For full configuration details, see [Configuration docs](https://harshil-jani.github.io/bunnyDB/docs/configuration).
 
-```bash
-# Generate protobuf
-./scripts/generate-protos.sh
+## Source Database Requirements
 
-# Build locally
-cd flow && go build -o bunny-worker ./cmd/worker
-cd flow && go build -o bunny-api ./cmd/api
+Your source PostgreSQL must have:
 
-# Run tests
-cd flow && go test ./...
+```sql
+-- postgresql.conf
+wal_level = logical
+max_replication_slots = 4    -- at least 1 per mirror
+max_wal_senders = 4          -- at least 1 per mirror
 ```
+
+The connecting user needs `REPLICATION` privilege or superuser access.
+
+## Project Structure
+
+```
+bunnyDB/
+├── flow/           # Go backend (API server + Temporal worker)
+├── ui/             # Next.js web UI
+├── docs/           # Nextra documentation site
+├── landing/        # Static landing page (for GitHub Pages)
+├── volumes/        # Docker volume configs
+└── docker-compose.yml
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Run the dev setup: `docker compose --profile dev up -d`
+4. Make changes and test
+5. Submit a pull request
+
+See [Contributing Guide](https://harshil-jani.github.io/bunnyDB/docs/contributing) for details.
 
 ## License
 
-Apache 2.0 - Derived from PeerDB (ELv2)
+Apache 2.0 — Derived from [PeerDB](https://github.com/PeerDB-io/peerdb) (ELv2)

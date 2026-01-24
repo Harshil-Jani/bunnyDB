@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
-import { LogOut, HelpCircle } from 'lucide-react';
+import { LogOut, HelpCircle, BookOpen } from 'lucide-react';
 import { ThemeProvider } from './ThemeProvider';
 import { ThemeToggle } from './ThemeToggle';
 import { BunnyLogo } from './BunnyLogo';
@@ -58,6 +58,10 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
                 <a id="nav-mirrors" href="/mirrors" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Mirrors</a>
                 <a id="nav-peers" href="/peers" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Peers</a>
                 <a id="nav-settings" href="/settings" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Settings</a>
+                <a href="http://localhost:3001" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">
+                  <BookOpen className="w-4 h-4" />
+                  Docs
+                </a>
                 <ThemeToggle />
                 {user && (
                   <div id="user-menu" className="flex items-center gap-3 ml-2 pl-4 border-l border-gray-200 dark:border-gray-700">
