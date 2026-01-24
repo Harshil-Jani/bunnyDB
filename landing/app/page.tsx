@@ -24,10 +24,11 @@ function PeersScreen() {
 
   return (
     <div className="space-y-2.5">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-1">
         <span className="text-xs font-semibold text-gray-900 dark:text-white">Peers</span>
         <div className="px-2 py-0.5 bg-blue-500 text-white text-[9px] font-medium rounded">+ Add Peer</div>
       </div>
+      <p className="text-[9px] text-gray-400 dark:text-gray-500 mb-2">A <span className="font-semibold text-gray-600 dark:text-gray-300">Peer</span> is a PostgreSQL connection — your source or destination database.</p>
       {[
         { name: 'production-db', host: 'pg-prod.internal', port: 5432, role: 'source' },
         { name: 'analytics-replica', host: 'pg-analytics.internal', port: 5432, role: 'destination' },
@@ -53,7 +54,7 @@ function PeersScreen() {
           </div>
         </div>
       ))}
-      <p className="text-[9px] text-gray-400 dark:text-gray-500 text-center pt-1">One-click connection test verifies credentials before you go live.</p>
+      <p className="text-[9px] text-gray-400 dark:text-gray-500 text-center pt-1">One-click test verifies credentials before you go live.</p>
     </div>
   );
 }
@@ -70,10 +71,11 @@ function TablesScreen() {
   const tables = ['users', 'orders', 'products', 'payments', 'sessions'];
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-1">
         <span className="text-xs font-semibold text-gray-900 dark:text-white">Select Tables</span>
         <span className="text-[9px] text-gray-400">{checked.length}/{tables.length} selected</span>
       </div>
+      <p className="text-[9px] text-gray-400 dark:text-gray-500 mb-2">Pick which tables to replicate. A <span className="font-semibold text-gray-600 dark:text-gray-300">Mirror</span> streams changes from source peer to destination peer.</p>
       <div className="grid grid-cols-2 gap-1.5">
         {tables.map((t, i) => (
           <div key={t} className={`flex items-center gap-2 px-2.5 py-1.5 rounded border transition-all duration-200 ${
@@ -119,10 +121,11 @@ function MonitorScreen() {
 
   return (
     <div className="space-y-2.5">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-1">
         <span className="text-xs font-semibold text-gray-900 dark:text-white">Mirrors</span>
         <div className="px-2 py-0.5 bg-blue-500 text-white text-[9px] font-medium rounded">+ Create Mirror</div>
       </div>
+      <p className="text-[9px] text-gray-400 dark:text-gray-500 mb-2">A <span className="font-semibold text-gray-600 dark:text-gray-300">Mirror</span> is a live replication job — it continuously streams WAL changes between two peers.</p>
       {/* Active mirror */}
       <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
         <div className="flex items-center justify-between mb-2">
@@ -192,7 +195,7 @@ function ControlsScreen() {
 
   return (
     <div className="space-y-2.5">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-gray-900 dark:text-white">prod-to-analytics</span>
           <span className="text-[8px] font-medium text-green-700 dark:text-green-400 px-1.5 py-0.5 bg-green-100 dark:bg-green-900/30 rounded-full">
@@ -200,6 +203,7 @@ function ControlsScreen() {
           </span>
         </div>
       </div>
+      <p className="text-[9px] text-gray-400 dark:text-gray-500 mb-2">Pause, resume, or resync individual tables without stopping the whole mirror.</p>
       {/* Action buttons */}
       <div className="flex items-center gap-1.5">
         {[
