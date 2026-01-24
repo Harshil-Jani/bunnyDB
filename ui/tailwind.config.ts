@@ -9,6 +9,16 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      animation: {
+        'demo-flow': 'demo-flow 2s ease-in-out infinite',
+      },
+      keyframes: {
+        'demo-flow': {
+          '0%': { width: '30%', opacity: '0.7' },
+          '50%': { width: '80%', opacity: '1' },
+          '100%': { width: '30%', opacity: '0.7' },
+        },
+      },
       colors: {
         bunny: {
           50: '#fef7ee',

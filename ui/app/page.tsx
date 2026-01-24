@@ -6,144 +6,112 @@ import { ArrowRight, Database, ArrowDown, MousePointer } from 'lucide-react';
 import { BunnyLogo } from '../components/BunnyLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
 
-const demoSteps = [
-  {
-    label: 'Register Peers',
-    description: 'Add source & destination PostgreSQL connections',
-    visual: (
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
-          <Database className="w-4 h-4 text-blue-500" />
-          <span className="text-xs font-medium text-gray-700 dark:text-gray-200">production-db</span>
-          <span className="ml-auto text-[10px] text-green-600 dark:text-green-400 font-medium">Connected</span>
-        </div>
-        <div className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
-          <Database className="w-4 h-4 text-purple-500" />
-          <span className="text-xs font-medium text-gray-700 dark:text-gray-200">analytics-replica</span>
-          <span className="ml-auto text-[10px] text-green-600 dark:text-green-400 font-medium">Connected</span>
-        </div>
-      </div>
-    ),
-  },
-  {
-    label: 'Select Tables',
-    description: 'Choose which tables to replicate',
-    visual: (
-      <div className="space-y-1.5">
-        {['users', 'orders', 'products', 'payments'].map((t, i) => (
-          <div key={t} className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
-            <div className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center ${i < 3 ? 'border-blue-500 bg-blue-500' : 'border-gray-300 dark:border-gray-600'}`}>
-              {i < 3 && <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 12 12"><path d="M10.28 2.28L3.989 8.575 1.695 6.28A1 1 0 00.28 7.695l3 3a1 1 0 001.414 0l7-7A1 1 0 0010.28 2.28z"/></svg>}
-            </div>
-            <span className="text-xs text-gray-700 dark:text-gray-200 font-mono">public.{t}</span>
-          </div>
-        ))}
-      </div>
-    ),
-  },
-  {
-    label: 'Monitor Replication',
-    description: 'Real-time status, logs, and controls',
-    visual: (
-      <div className="space-y-2">
-        <div className="flex items-center justify-between px-3 py-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-xs font-medium text-gray-700 dark:text-gray-200">prod-to-analytics</span>
-          </div>
-          <span className="text-[10px] font-medium text-green-600 dark:text-green-400 px-2 py-0.5 bg-green-50 dark:bg-green-900/30 rounded-full">REPLICATING</span>
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          <div className="px-2 py-1.5 bg-gray-50 dark:bg-gray-800/50 rounded text-center">
-            <div className="text-[10px] text-gray-400">Tables</div>
-            <div className="text-xs font-bold text-gray-700 dark:text-gray-200">3</div>
-          </div>
-          <div className="px-2 py-1.5 bg-gray-50 dark:bg-gray-800/50 rounded text-center">
-            <div className="text-[10px] text-gray-400">Batch</div>
-            <div className="text-xs font-bold text-gray-700 dark:text-gray-200">1,247</div>
-          </div>
-          <div className="px-2 py-1.5 bg-gray-50 dark:bg-gray-800/50 rounded text-center">
-            <div className="text-[10px] text-gray-400">Lag</div>
-            <div className="text-xs font-bold text-gray-700 dark:text-gray-200">&lt;1s</div>
-          </div>
-        </div>
-      </div>
-    ),
-  },
-];
-
 function DemoAnimation() {
-  const [activeStep, setActiveStep] = useState(0);
+  const [batchCount, setBatchCount] = useState(1243);
+  const [rowCount, setRowCount] = useState(48721);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setActiveStep((s) => (s + 1) % demoSteps.length);
-    }, 3500);
+      setBatchCount((b) => b + Math.floor(Math.random() * 3) + 1);
+      setRowCount((r) => r + Math.floor(Math.random() * 50) + 10);
+    }, 2000);
     return () => clearInterval(interval);
   }, []);
 
   return (
-    <div className="max-w-3xl mx-auto">
-      {/* Step tabs */}
-      <div className="flex items-center justify-center gap-1 mb-6">
-        {demoSteps.map((step, i) => (
-          <button
-            key={i}
-            onClick={() => setActiveStep(i)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-all ${
-              i === activeStep
-                ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-sm'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
-            }`}
-          >
-            <span className="w-4 h-4 rounded-full border-2 flex items-center justify-center text-[9px] font-bold border-current">
-              {i + 1}
-            </span>
-            {step.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Demo window */}
-      <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
+    <div className="max-w-4xl mx-auto">
+      {/* Full mock dashboard */}
+      <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm">
         {/* Window chrome */}
-        <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-          <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
-          <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
-          <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
+        <div className="flex items-center gap-1.5 px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+          <div className="w-2 h-2 rounded-full bg-red-400" />
+          <div className="w-2 h-2 rounded-full bg-yellow-400" />
+          <div className="w-2 h-2 rounded-full bg-green-400" />
           <div className="ml-3 flex-1 flex items-center justify-center">
             <div className="px-3 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px] text-gray-400 font-mono">
-              localhost:3000/{activeStep === 0 ? 'peers' : activeStep === 1 ? 'mirrors/new' : 'mirrors'}
+              localhost:3000/mirrors
             </div>
           </div>
         </div>
 
-        {/* Content */}
-        <div className="p-6 min-h-[200px] flex flex-col justify-center">
-          <div className="max-w-xs mx-auto w-full">
-            <p className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wider font-medium mb-1">
-              Step {activeStep + 1}
-            </p>
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
-              {demoSteps[activeStep].label}
-            </h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-              {demoSteps[activeStep].description}
-            </p>
-            {demoSteps[activeStep].visual}
+        {/* Mock nav */}
+        <div className="flex items-center justify-between px-5 py-2 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900">
+          <div className="flex items-center gap-2">
+            <BunnyLogo size={18} />
+            <span className="text-xs font-semibold text-gray-900 dark:text-white">BunnyDB</span>
+          </div>
+          <div className="flex items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400">
+            <span className="text-bunny-600 dark:text-bunny-400 font-medium">Mirrors</span>
+            <span>Peers</span>
+            <span>Settings</span>
           </div>
         </div>
 
-        {/* Progress dots */}
-        <div className="flex items-center justify-center gap-1.5 pb-4">
-          {demoSteps.map((_, i) => (
-            <div
-              key={i}
-              className={`h-1 rounded-full transition-all duration-300 ${
-                i === activeStep ? 'w-6 bg-bunny-500' : 'w-1.5 bg-gray-300 dark:bg-gray-700'
-              }`}
-            />
-          ))}
+        {/* Dashboard content */}
+        <div className="bg-gray-50 dark:bg-gray-950 p-5">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-sm font-semibold text-gray-900 dark:text-white">Mirrors</span>
+            <div className="px-2.5 py-1 bg-blue-500 text-white text-[10px] font-medium rounded-md">
+              + Create Mirror
+            </div>
+          </div>
+
+          {/* Live mirror cards */}
+          <div className="space-y-3">
+            {/* Mirror 1 - Active */}
+            <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                  <span className="text-xs font-semibold text-gray-900 dark:text-white">prod-to-analytics</span>
+                  <span className="text-[9px] font-medium text-green-700 dark:text-green-400 px-1.5 py-0.5 bg-green-100 dark:bg-green-900/30 rounded-full">REPLICATING</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="px-2 py-0.5 text-[9px] text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded">Pause</div>
+                  <div className="px-2 py-0.5 text-[9px] text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded">Resync</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-4 gap-3">
+                <div className="text-center">
+                  <div className="text-[9px] text-gray-400 mb-0.5">Tables</div>
+                  <div className="text-xs font-bold text-gray-900 dark:text-white">5</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[9px] text-gray-400 mb-0.5">Batches</div>
+                  <div className="text-xs font-bold text-gray-900 dark:text-white tabular-nums">{batchCount.toLocaleString()}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[9px] text-gray-400 mb-0.5">Rows synced</div>
+                  <div className="text-xs font-bold text-gray-900 dark:text-white tabular-nums">{rowCount.toLocaleString()}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[9px] text-gray-400 mb-0.5">Lag</div>
+                  <div className="text-xs font-bold text-green-600 dark:text-green-400">&lt;1s</div>
+                </div>
+              </div>
+              {/* Animated flow bar */}
+              <div className="mt-3 h-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-bunny-400 to-green-400 rounded-full animate-demo-flow" />
+              </div>
+            </div>
+
+            {/* Mirror 2 - Paused */}
+            <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4 opacity-70">
+              <div className="flex items-center gap-2.5">
+                <div className="w-2 h-2 rounded-full bg-yellow-500" />
+                <span className="text-xs font-semibold text-gray-900 dark:text-white">staging-sync</span>
+                <span className="text-[9px] font-medium text-yellow-700 dark:text-yellow-400 px-1.5 py-0.5 bg-yellow-100 dark:bg-yellow-900/30 rounded-full">PAUSED</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Live log line */}
+          <div className="mt-4 px-3 py-2 bg-gray-900 dark:bg-gray-800 rounded-lg font-mono text-[10px] text-gray-300 flex items-center gap-2 overflow-hidden">
+            <span className="text-green-400 flex-shrink-0">INF</span>
+            <span className="text-gray-500 flex-shrink-0">15:04:32</span>
+            <span className="truncate">batch #{batchCount} committed &middot; 23 rows &middot; LSN 0/1A3F{(batchCount % 1000).toString(16).toUpperCase().padStart(3, '0')}0</span>
+          </div>
         </div>
       </div>
     </div>
@@ -337,34 +305,27 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Interactive Demo Walkthrough */}
+      {/* Live Demo */}
       <section className="border-t border-gray-100 dark:border-gray-900">
         <div className="max-w-5xl mx-auto px-6 py-20">
-          <div className="text-center mb-12">
-            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">See it in action</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto">
-              A quick walkthrough of the BunnyDB dashboard — from adding peers to monitoring active mirrors.
-            </p>
-          </div>
-
-          {/* Animated UI Mockup */}
-          <DemoAnimation />
-
-          <div className="mt-10 text-center">
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-              Want a hands-on tour? Log in and we'll guide you through the interface step by step.
-            </p>
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">See it in action</h2>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Live counters. Real dashboard feel.</p>
+            </div>
             <button
               onClick={() => {
                 localStorage.removeItem('bunny_tour_seen');
                 router.push('/mirrors');
               }}
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
             >
-              <MousePointer className="w-4 h-4" />
-              Take the Interactive Tour
+              <MousePointer className="w-3.5 h-3.5" />
+              Take Interactive Tour
             </button>
           </div>
+
+          <DemoAnimation />
         </div>
       </section>
 
