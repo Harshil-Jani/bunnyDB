@@ -1,4 +1,4 @@
-import { CheckCircle, Pause, AlertCircle, RefreshCw, Clock, XCircle, AlertTriangle, Info } from 'lucide-react';
+import { CheckCircle, Pause, AlertCircle, RefreshCw, Clock, XCircle, AlertTriangle, Info, Play, Database, GitBranch, RotateCcw, User } from 'lucide-react';
 
 export const getStatusColor = (status: string) => {
   switch (status?.toUpperCase()) {
@@ -89,5 +89,128 @@ export const getLogLevelIcon = (level: string) => {
       return <Info className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />;
     default:
       return <Info className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />;
+  }
+};
+
+// ─── Event-based log categorization ───────────────────────────────────────
+
+export type LogEventCategory = 'setup' | 'replication' | 'schema' | 'resync' | 'user_action' | 'error' | 'snapshot';
+
+export const LOG_EVENT_CATEGORIES: { key: LogEventCategory; label: string }[] = [
+  { key: 'setup', label: 'Setup' },
+  { key: 'replication', label: 'Replication' },
+  { key: 'schema', label: 'Schema' },
+  { key: 'resync', label: 'Resync' },
+  { key: 'snapshot', label: 'Snapshot' },
+  { key: 'user_action', label: 'User Action' },
+  { key: 'error', label: 'Error' },
+];
+
+export const getLogEventCategory = (message: string, level: string): LogEventCategory => {
+  if (level?.toUpperCase() === 'ERROR') return 'error';
+
+  const msg = message.toLowerCase();
+
+  // User actions
+  if (msg.startsWith('user triggered')) return 'user_action';
+
+  // Setup events
+  if (msg.includes('mirror setup') || msg.includes('starting mirror') ||
+      msg.includes('mirror created') || msg.includes('creating publication') ||
+      msg.includes('creating replication slot') || msg.includes('connecting to source') ||
+      msg.includes('connected to source') || msg.includes('tables updated')) return 'setup';
+
+  // Replication events
+  if (msg.includes('cdc batch') || msg.includes('replication')) return 'replication';
+
+  // Schema events
+  if (msg.includes('schema')) return 'schema';
+
+  // Resync events
+  if (msg.includes('resync') || msg.includes('swap')) return 'resync';
+
+  // Snapshot events
+  if (msg.includes('snapshot')) return 'snapshot';
+
+  // Failed = error category
+  if (msg.includes('failed')) return 'error';
+
+  return 'replication'; // default for unmatched
+};
+
+export const getEventCategoryColor = (category: LogEventCategory) => {
+  switch (category) {
+    case 'setup':
+      return 'bg-indigo-50 border-l-indigo-500 dark:bg-indigo-950/30 dark:border-l-indigo-400';
+    case 'replication':
+      return 'bg-emerald-50 border-l-emerald-500 dark:bg-emerald-950/30 dark:border-l-emerald-400';
+    case 'schema':
+      return 'bg-violet-50 border-l-violet-500 dark:bg-violet-950/30 dark:border-l-violet-400';
+    case 'resync':
+      return 'bg-cyan-50 border-l-cyan-500 dark:bg-cyan-950/30 dark:border-l-cyan-400';
+    case 'snapshot':
+      return 'bg-sky-50 border-l-sky-500 dark:bg-sky-950/30 dark:border-l-sky-400';
+    case 'user_action':
+      return 'bg-amber-50 border-l-amber-500 dark:bg-amber-950/30 dark:border-l-amber-400';
+    case 'error':
+      return 'bg-red-50 border-l-red-500 dark:bg-red-950/30 dark:border-l-red-400';
+  }
+};
+
+export const getEventCategoryBadge = (category: LogEventCategory) => {
+  switch (category) {
+    case 'setup':
+      return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300';
+    case 'replication':
+      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300';
+    case 'schema':
+      return 'bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300';
+    case 'resync':
+      return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300';
+    case 'snapshot':
+      return 'bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300';
+    case 'user_action':
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300';
+    case 'error':
+      return 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300';
+  }
+};
+
+export const getEventCategoryIcon = (category: LogEventCategory) => {
+  switch (category) {
+    case 'setup':
+      return <Database className="w-4 h-4 text-indigo-500 flex-shrink-0" />;
+    case 'replication':
+      return <Play className="w-4 h-4 text-emerald-500 flex-shrink-0" />;
+    case 'schema':
+      return <GitBranch className="w-4 h-4 text-violet-500 flex-shrink-0" />;
+    case 'resync':
+      return <RotateCcw className="w-4 h-4 text-cyan-500 flex-shrink-0" />;
+    case 'snapshot':
+      return <Database className="w-4 h-4 text-sky-500 flex-shrink-0" />;
+    case 'user_action':
+      return <User className="w-4 h-4 text-amber-500 flex-shrink-0" />;
+    case 'error':
+      return <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />;
+  }
+};
+
+export const getEventCategoryFilterColor = (category: LogEventCategory, active: boolean) => {
+  if (!active) return 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700';
+  switch (category) {
+    case 'setup':
+      return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300';
+    case 'replication':
+      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300';
+    case 'schema':
+      return 'bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300';
+    case 'resync':
+      return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300';
+    case 'snapshot':
+      return 'bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300';
+    case 'user_action':
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300';
+    case 'error':
+      return 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300';
   }
 };

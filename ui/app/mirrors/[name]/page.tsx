@@ -25,7 +25,7 @@ import {
   Search,
   Info,
 } from 'lucide-react';
-import { getStatusColor, getStatusIcon, getLogLevelColor, getLogLevelBadge, getLogLevelIcon } from '../../../lib/status';
+import { getStatusColor, getStatusIcon, getLogEventCategory, getEventCategoryColor, getEventCategoryBadge, getEventCategoryIcon, getEventCategoryFilterColor, LOG_EVENT_CATEGORIES, LogEventCategory } from '../../../lib/status';
 
 interface LogEntry {
   id: number;
@@ -80,7 +80,7 @@ export default function MirrorDetailPage() {
   const [logsLoading, setLogsLoading] = useState(false);
   const [logSearch, setLogSearch] = useState('');
   const [logSearchInput, setLogSearchInput] = useState('');
-  const [logLevelFilter, setLogLevelFilter] = useState<string>('');
+  const [logEventFilter, setLogEventFilter] = useState<LogEventCategory | ''>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -127,7 +127,6 @@ export default function MirrorDetailPage() {
         offset: String(currentOffset),
       });
       if (logSearch) params.set('search', logSearch);
-      if (logLevelFilter) params.set('level', logLevelFilter);
 
       const res = await fetch(`${API_URL}/v1/mirrors/${mirrorName}/logs?${params}`);
       if (res.ok) {
@@ -146,7 +145,7 @@ export default function MirrorDetailPage() {
     } finally {
       setLogsLoading(false);
     }
-  }, [mirrorName, logSearch, logLevelFilter, logsOffset]);
+  }, [mirrorName, logSearch, logsOffset]);
 
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -232,12 +231,17 @@ export default function MirrorDetailPage() {
     };
   }, [fetchMirrorDetails, fetchLogs, fetchAllTables]);
 
-  // Re-fetch logs when search or filter changes (reset to page 1)
+  // Re-fetch logs when search changes (reset to page 1)
   useEffect(() => {
     setLogs([]);
     setLogsOffset(0);
     fetchLogs(false, 0);
-  }, [logSearch, logLevelFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [logSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Filter logs client-side by event category
+  const filteredLogs = logEventFilter
+    ? logs.filter(log => getLogEventCategory(log.message, log.level) === logEventFilter)
+    : logs;
 
   const toggleTableExpanded = (tableName: string) => {
     setExpandedTables((prev) => {
@@ -786,7 +790,7 @@ export default function MirrorDetailPage() {
         {/* Logs Tab */}
         {activeTab === 'logs' && (
           <div>
-            {/* Search and Filter Bar */}
+            {/* Search Bar */}
             <div className="p-4 border-b dark:border-gray-700 flex flex-wrap items-center gap-3">
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -815,65 +819,74 @@ export default function MirrorDetailPage() {
                   Clear
                 </button>
               )}
-              <div className="flex items-center gap-1">
-                {['', 'INFO', 'WARN', 'ERROR'].map((lvl) => (
-                  <button
-                    key={lvl}
-                    onClick={() => setLogLevelFilter(lvl)}
-                    className={`px-2.5 py-1.5 text-xs rounded-md font-medium transition-colors ${
-                      logLevelFilter === lvl
-                        ? lvl === 'ERROR' ? 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
-                          : lvl === 'WARN' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300'
-                          : lvl === 'INFO' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
-                          : 'bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-white'
-                        : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'
-                    }`}
-                  >
-                    {lvl || 'All'}
-                  </button>
-                ))}
-              </div>
               <span className="text-xs text-gray-500 dark:text-gray-400 ml-auto">
-                {logs.length} of {logsTotal}
+                {logEventFilter ? `${filteredLogs.length} shown` : `${logs.length} of ${logsTotal}`}
               </span>
+            </div>
+
+            {/* Event Category Filters */}
+            <div className="px-4 py-2.5 border-b dark:border-gray-700 flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">Events:</span>
+              <button
+                onClick={() => setLogEventFilter('')}
+                className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
+                  logEventFilter === '' ? 'bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-white' : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'
+                }`}
+              >
+                All
+              </button>
+              {LOG_EVENT_CATEGORIES.map((cat) => (
+                <button
+                  key={cat.key}
+                  onClick={() => setLogEventFilter(logEventFilter === cat.key ? '' : cat.key)}
+                  className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
+                    getEventCategoryFilterColor(cat.key, logEventFilter === cat.key)
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              ))}
             </div>
 
             {/* Log Entries */}
             <div className="max-h-[600px] overflow-y-auto">
-              {logs.length > 0 ? (
+              {filteredLogs.length > 0 ? (
                 <>
-                  {logs.map((log) => (
-                    <div key={log.id} className={`px-4 py-3 border-l-4 border-b dark:border-b-gray-700/50 ${getLogLevelColor(log.level)}`}>
-                      <div className="flex items-start gap-3">
-                        {getLogLevelIcon(log.level)}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${getLogLevelBadge(log.level)}`}>
-                              {log.level}
-                            </span>
-                            <span className="font-medium text-sm text-gray-900 dark:text-white">{log.message}</span>
-                            <span className="text-xs text-gray-400 dark:text-gray-500 ml-auto whitespace-nowrap">
-                              {formatDate(log.created_at)}
-                            </span>
+                  {filteredLogs.map((log) => {
+                    const category = getLogEventCategory(log.message, log.level);
+                    return (
+                      <div key={log.id} className={`px-4 py-3 border-l-4 border-b dark:border-b-gray-700/50 ${getEventCategoryColor(category)}`}>
+                        <div className="flex items-start gap-3">
+                          {getEventCategoryIcon(category)}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${getEventCategoryBadge(category)}`}>
+                                {LOG_EVENT_CATEGORIES.find(c => c.key === category)?.label || category}
+                              </span>
+                              <span className="font-medium text-sm text-gray-900 dark:text-white">{log.message}</span>
+                              <span className="text-xs text-gray-400 dark:text-gray-500 ml-auto whitespace-nowrap">
+                                {formatDate(log.created_at)}
+                              </span>
+                            </div>
+                            {log.details && (
+                              <pre className="mt-1.5 text-xs text-gray-600 dark:text-gray-300 bg-white/60 dark:bg-gray-900/40 rounded p-2 overflow-x-auto font-mono">
+                                {(() => {
+                                  try {
+                                    return JSON.stringify(JSON.parse(log.details), null, 2);
+                                  } catch {
+                                    return log.details;
+                                  }
+                                })()}
+                              </pre>
+                            )}
                           </div>
-                          {log.details && (
-                            <pre className="mt-1.5 text-xs text-gray-600 dark:text-gray-300 bg-white/60 dark:bg-gray-900/40 rounded p-2 overflow-x-auto font-mono">
-                              {(() => {
-                                try {
-                                  return JSON.stringify(JSON.parse(log.details), null, 2);
-                                } catch {
-                                  return log.details;
-                                }
-                              })()}
-                            </pre>
-                          )}
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
 
                   {/* Load More */}
-                  {logs.length < logsTotal && (
+                  {!logEventFilter && logs.length < logsTotal && (
                     <div className="p-4 text-center">
                       <button
                         onClick={() => fetchLogs(true)}
@@ -881,6 +894,17 @@ export default function MirrorDetailPage() {
                         className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
                       >
                         {logsLoading ? 'Loading...' : `Load More (${logsTotal - logs.length} remaining)`}
+                      </button>
+                    </div>
+                  )}
+                  {logEventFilter && logs.length < logsTotal && (
+                    <div className="p-4 text-center">
+                      <button
+                        onClick={() => fetchLogs(true)}
+                        disabled={logsLoading}
+                        className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                      >
+                        {logsLoading ? 'Loading...' : 'Load More to find more matching events'}
                       </button>
                     </div>
                   )}
@@ -892,8 +916,18 @@ export default function MirrorDetailPage() {
                   ) : (
                     <>
                       <FileText className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600 mb-3" />
-                      {logSearch || logLevelFilter ? (
-                        <p>No logs matching your filters.</p>
+                      {logSearch || logEventFilter ? (
+                        <>
+                          <p>No logs matching your filters.</p>
+                          {logEventFilter && logs.length < logsTotal && (
+                            <button
+                              onClick={() => fetchLogs(true)}
+                              className="mt-2 text-sm text-blue-500 hover:underline"
+                            >
+                              Load more logs to search further
+                            </button>
+                          )}
+                        </>
                       ) : (
                         <>
                           <p>No logs available yet.</p>
