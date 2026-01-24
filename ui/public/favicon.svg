@@ -1,25 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <!-- Background circle -->
+  <!-- Background -->
   <circle cx="32" cy="32" r="30" fill="#f0750f"/>
-  <!-- Left ear -->
-  <ellipse cx="24" cy="14" rx="5" ry="12" fill="white" transform="rotate(-8 24 14)"/>
-  <ellipse cx="24" cy="14" rx="3" ry="9" fill="#fad7a5" transform="rotate(-8 24 14)"/>
-  <!-- Right ear -->
-  <ellipse cx="40" cy="14" rx="5" ry="12" fill="white" transform="rotate(8 40 14)"/>
-  <ellipse cx="40" cy="14" rx="3" ry="9" fill="#fad7a5" transform="rotate(8 40 14)"/>
-  <!-- Head/face -->
-  <circle cx="32" cy="36" r="18" fill="white"/>
-  <!-- Eyes -->
-  <circle cx="26" cy="33" r="3" fill="#411506"/>
-  <circle cx="38" cy="33" r="3" fill="#411506"/>
+  <!-- Left ear - tall, expressive -->
+  <ellipse cx="23" cy="12" rx="5.5" ry="14" fill="#e8e8e8" transform="rotate(-12 23 12)"/>
+  <ellipse cx="23" cy="12" rx="3" ry="10" fill="#ffb8b8" transform="rotate(-12 23 12)"/>
+  <!-- Right ear - tall, slightly tilted for character -->
+  <ellipse cx="41" cy="10" rx="5.5" ry="14" fill="#e8e8e8" transform="rotate(6 41 10)"/>
+  <ellipse cx="41" cy="10" rx="3" ry="10" fill="#ffb8b8" transform="rotate(6 41 10)"/>
+  <!-- Face - slightly oval -->
+  <ellipse cx="32" cy="38" rx="17" ry="18" fill="#e8e8e8"/>
+  <!-- Cheek/muzzle area - white -->
+  <ellipse cx="32" cy="42" rx="10" ry="9" fill="white"/>
+  <!-- Eyes - confident, slightly lidded -->
+  <ellipse cx="26" cy="34" rx="3.5" ry="4" fill="white"/>
+  <ellipse cx="38" cy="34" rx="3.5" ry="4" fill="white"/>
+  <circle cx="27" cy="35" r="2.2" fill="#411506"/>
+  <circle cx="39" cy="35" r="2.2" fill="#411506"/>
   <!-- Eye shine -->
-  <circle cx="27.5" cy="31.5" r="1.2" fill="white"/>
-  <circle cx="39.5" cy="31.5" r="1.2" fill="white"/>
+  <circle cx="27.8" cy="34" r="0.9" fill="white"/>
+  <circle cx="39.8" cy="34" r="0.9" fill="white"/>
+  <!-- Eyebrow hints -->
+  <path d="M23 29.5 Q26 28 29.5 29" stroke="#411506" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+  <path d="M35 29 Q38 28 41 29.5" stroke="#411506" stroke-width="1.2" fill="none" stroke-linecap="round"/>
   <!-- Nose -->
-  <ellipse cx="32" cy="39" rx="2.5" ry="2" fill="#f39333"/>
-  <!-- Mouth -->
-  <path d="M29 42 Q32 45 35 42" stroke="#943610" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-  <!-- Cheeks -->
-  <circle cx="22" cy="39" r="3" fill="#fad7a5" opacity="0.6"/>
-  <circle cx="42" cy="39" r="3" fill="#fad7a5" opacity="0.6"/>
+  <ellipse cx="32" cy="40" rx="2.5" ry="2" fill="#f39333"/>
+  <!-- Buck teeth -->
+  <rect x="29.5" y="44" width="2.5" height="3.5" rx="0.8" fill="white" stroke="#ccc" stroke-width="0.4"/>
+  <rect x="32" y="44" width="2.5" height="3.5" rx="0.8" fill="white" stroke="#ccc" stroke-width="0.4"/>
+  <!-- Smirk/grin -->
+  <path d="M27 44 Q32 46.5 37 44" stroke="#943610" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+  <!-- Whiskers -->
+  <line x1="14" y1="38" x2="22" y2="40" stroke="#aaa" stroke-width="0.7" stroke-linecap="round"/>
+  <line x1="14" y1="42" x2="22" y2="42" stroke="#aaa" stroke-width="0.7" stroke-linecap="round"/>
+  <line x1="42" y1="40" x2="50" y2="38" stroke="#aaa" stroke-width="0.7" stroke-linecap="round"/>
+  <line x1="42" y1="42" x2="50" y2="42" stroke="#aaa" stroke-width="0.7" stroke-linecap="round"/>
 </svg>
