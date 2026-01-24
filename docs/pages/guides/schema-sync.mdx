@@ -1,0 +1,397 @@
+import { Callout, Steps } from 'nextra/components'
+
+# Schema Sync
+
+Schema sync automatically detects and applies schema differences between source and destination tables. Use this when source schemas evolve and you need to propagate changes downstream.
+
+## What is Schema Sync?
+
+Schema sync compares the schema of each table in your mirror's table mappings and applies DDL changes to align the destination with the source. This includes:
+
+- Column additions and removals
+- Data type changes
+- Index additions/removals (if `replicate_indexes: true`)
+- Constraint modifications
+
+<Callout type="warning">
+Schema sync is a **destructive operation**. It drops the replication slot and restarts CDC from a fresh position. Always test in a staging environment first.
+</Callout>
+
+## When to Use Schema Sync
+
+Common scenarios:
+
+- **Column added on source**: New column needs to be replicated
+- **Column removed from source**: Destination should drop the column to match
+- **Data type changed**: Source column type was altered (e.g., `VARCHAR(50)` → `VARCHAR(255)`)
+- **Index added**: New index created on source should be replicated
+- **After manual schema changes**: Destination schema manually modified and you want to resync with source
+
+## What Schema Sync Does
+
+Schema sync performs the following operations:
+
+### Supported Changes
+
+| Change Type | Action | Example |
+|-------------|--------|---------|
+| Column addition | `ALTER TABLE ... ADD COLUMN` | Add `last_login TIMESTAMP` |
+| Column removal | `ALTER TABLE ... DROP COLUMN` | Drop `deprecated_field` |
+| Type change | `ALTER TABLE ... ALTER COLUMN TYPE` | Change `age INT` to `age BIGINT` |
+| Index addition | `CREATE INDEX` | Create `idx_email` on `users(email)` |
+| Index removal | `DROP INDEX` | Drop `idx_old_field` |
+
+### Not Supported
+
+Schema sync **does not** handle:
+
+- **Table drops**: Dropping tables from source doesn't drop them on destination
+- **Table renames**: Renaming source tables requires manual table mapping updates
+- **Primary key changes**: Modifying PKs requires manual intervention
+- **Enum type changes**: Enum modifications need custom migrations
+
+<Callout type="info">
+For unsupported changes, pause the mirror, manually apply DDL on both source and destination, update table mappings if needed, then resume.
+</Callout>
+
+## Running Schema Sync
+
+Trigger schema sync for a mirror:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/sync-schema \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Response
+
+```json
+{
+  "message": "Schema sync started for mirror 'prod_to_staging'"
+}
+```
+
+## Schema Sync Process
+
+<Steps>
+
+### Drop Replication Slot
+
+BunnyDB drops the existing replication slot on the source database:
+
+```sql
+SELECT pg_drop_replication_slot('bunny_prod_to_staging');
+```
+
+<Callout type="error">
+**This is a breaking point.** Any in-flight CDC changes are discarded. Ensure the mirror is caught up before running schema sync.
+</Callout>
+
+### Compare Schemas
+
+For each table in the mirror's table mappings, BunnyDB queries source and destination schemas:
+
+```sql
+-- Source schema
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'users';
+
+-- Destination schema
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'users';
+```
+
+### Apply DDL Changes
+
+BunnyDB generates and executes DDL statements to align destination with source:
+
+**Example: Column added on source**
+
+```sql
+ALTER TABLE public.users ADD COLUMN last_login TIMESTAMP;
+```
+
+**Example: Column removed from source**
+
+```sql
+ALTER TABLE public.users DROP COLUMN deprecated_field;
+```
+
+**Example: Type changed**
+
+```sql
+ALTER TABLE public.users ALTER COLUMN age TYPE BIGINT;
+```
+
+**Example: Index added (if `replicate_indexes: true`)**
+
+```sql
+CREATE INDEX idx_users_email ON public.users(email);
+```
+
+### Recreate Replication Slot
+
+A new replication slot is created at the current LSN:
+
+```sql
+SELECT pg_create_logical_replication_slot('bunny_prod_to_staging', 'pgoutput');
+```
+
+### Restart CDC
+
+CDC replication resumes from the new slot's starting LSN. This means:
+
+- **No historical data is lost** (tables already contain data from previous sync)
+- **Future changes are captured** from the new LSN onward
+- **Changes during schema sync** may be missed if sync takes a long time
+
+</Steps>
+
+<Callout type="warning">
+If schema sync takes several minutes and high write activity occurs on source, some changes might not be captured. For critical workloads, pause the mirror first.
+</Callout>
+
+## Best Practice: Pause Before Schema Sync
+
+To ensure no data loss:
+
+```bash
+# 1. Pause the mirror
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/pause \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# 2. Run schema sync
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/sync-schema \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Wait for schema sync to complete (check mirror status)
+
+# 3. Resume the mirror
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resume \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+This workflow guarantees:
+- No CDC changes are missed
+- Replication slot doesn't accumulate WAL during schema sync
+- Clean restart from known state
+
+## Monitoring Schema Sync
+
+Check mirror status during schema sync:
+
+```bash
+curl -X GET http://localhost:8112/v1/mirrors/prod_to_staging \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**During schema sync:**
+
+```json
+{
+  "name": "prod_to_staging",
+  "status": "SYNCING_SCHEMA",
+  "current_phase": "SCHEMA_SYNC",
+  "source_peer": "source_db",
+  "destination_peer": "dest_db"
+}
+```
+
+**After completion:**
+
+```json
+{
+  "name": "prod_to_staging",
+  "status": "RUNNING",
+  "current_phase": "CDC"
+}
+```
+
+## Example Workflow
+
+Suppose your source schema evolves:
+
+```sql
+-- Source database changes
+ALTER TABLE public.users ADD COLUMN verified BOOLEAN DEFAULT false;
+ALTER TABLE public.users DROP COLUMN old_status;
+ALTER TABLE public.orders ALTER COLUMN amount TYPE NUMERIC(12,2);
+CREATE INDEX idx_users_verified ON public.users(verified);
+```
+
+Sync these changes to destination:
+
+```bash
+# Pause for safety
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/pause \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Sync schema
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/sync-schema \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Wait for completion (poll status)
+while true; do
+  STATUS=$(curl -s http://localhost:8112/v1/mirrors/prod_to_staging \
+    -H "Authorization: Bearer YOUR_TOKEN" | jq -r '.status')
+
+  if [ "$STATUS" == "PAUSED" ]; then
+    echo "Schema sync complete"
+    break
+  fi
+
+  echo "Status: $STATUS, waiting..."
+  sleep 5
+done
+
+# Resume CDC
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resume \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+After this, the destination schema matches the source, and CDC continues replicating new changes.
+
+## Verifying Schema Sync
+
+After schema sync, validate that schemas match:
+
+```bash
+# Check column list on source
+psql -h source_db -d production -c "
+  SELECT column_name, data_type, is_nullable
+  FROM information_schema.columns
+  WHERE table_name = 'users'
+  ORDER BY ordinal_position;
+"
+
+# Check column list on destination
+psql -h dest_db -d production -c "
+  SELECT column_name, data_type, is_nullable
+  FROM information_schema.columns
+  WHERE table_name = 'users'
+  ORDER BY ordinal_position;
+"
+
+# Compare outputs
+```
+
+## Handling Complex Schema Changes
+
+### Enum Type Changes
+
+Enums are not automatically synced. Handle manually:
+
+```sql
+-- Source: Add new enum value
+ALTER TYPE order_status ADD VALUE 'cancelled';
+
+-- Destination: Replicate manually
+ALTER TYPE order_status ADD VALUE 'cancelled';
+```
+
+Then run schema sync to catch any other changes.
+
+### Primary Key Changes
+
+Changing PKs requires recreation. Pause the mirror, manually alter both databases, then resync:
+
+```bash
+# Pause
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/pause \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Manually apply PK change on both source and destination
+psql -h source_db -d production -c "
+  ALTER TABLE users DROP CONSTRAINT users_pkey;
+  ALTER TABLE users ADD PRIMARY KEY (id, tenant_id);
+"
+
+psql -h dest_db -d production -c "
+  ALTER TABLE users DROP CONSTRAINT users_pkey;
+  ALTER TABLE users ADD PRIMARY KEY (id, tenant_id);
+"
+
+# Resync table to ensure data consistency
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resync/public.users \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Resume
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resume \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Table Renames
+
+Table renames require updating table mappings:
+
+```bash
+# Source: Rename table
+psql -h source_db -d production -c "ALTER TABLE users RENAME TO customers;"
+
+# Update mirror table mappings
+curl -X PUT http://localhost:8112/v1/mirrors/prod_to_staging/tables \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "table_mappings": [
+      {
+        "source_table": "public.customers",
+        "destination_table": "public.users"
+      }
+    ]
+  }'
+
+# Resync to align data
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resync \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+## Troubleshooting
+
+### Schema Sync Fails with Type Incompatibility
+
+**Cause:** Type change requires table rewrite (e.g., `TEXT` → `INT`).
+
+**Solution:** Manually handle the migration:
+
+```sql
+-- Destination: Add new column, migrate data, drop old
+ALTER TABLE users ADD COLUMN age_new INT;
+UPDATE users SET age_new = age::INT WHERE age IS NOT NULL;
+ALTER TABLE users DROP COLUMN age;
+ALTER TABLE users RENAME COLUMN age_new TO age;
+```
+
+Then run schema sync to catch other changes.
+
+### Replication Slot Already Exists After Schema Sync
+
+**Cause:** Slot drop failed but sync continued.
+
+**Solution:** Manually drop the slot:
+
+```sql
+-- On source database
+SELECT pg_drop_replication_slot('bunny_prod_to_staging');
+```
+
+Then retry schema sync.
+
+### Schema Sync Completes but Data Missing
+
+**Cause:** Changes occurred during schema sync that weren't captured.
+
+**Solution:** Run a table-level resync for affected tables:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resync/public.users \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+## Next Steps
+
+- [Table-Level Resync](/guides/table-level-resync) - Resync data after schema changes
+- [Pause & Resume](/guides/pause-resume) - Control mirror execution for safe schema operations
+- [Creating Your First Mirror](/guides/creating-your-first-mirror) - Configure schema replication settings

@@ -1,0 +1,434 @@
+import { Callout } from 'nextra/components'
+
+# Architecture
+
+BunnyDB is a distributed system built on Temporal workflows and PostgreSQL logical replication. This page explains how the components work together to provide reliable CDC replication.
+
+## System Overview
+
+BunnyDB consists of 8 Docker services working together:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         BunnyDB Stack                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  User Interfaces                                                    │
+│  ┌──────────────────┐              ┌──────────────────────────┐    │
+│  │   bunny-ui       │              │    temporal-ui           │    │
+│  │   (Next.js)      │              │    (Temporal Web)        │    │
+│  │   Port: 3000     │              │    Port: 8085            │    │
+│  └────────┬─────────┘              └──────────────────────────┘    │
+│           │                                                         │
+│  ─────────┼─────────────────────────────────────────────────────── │
+│           │                                                         │
+│  Application Layer                                                  │
+│  ┌────────▼─────────┐              ┌──────────────────────────┐    │
+│  │   bunny-api      │◄────────────►│    temporal              │    │
+│  │   (REST API)     │              │    (Orchestrator)        │    │
+│  │   Port: 8112     │              │    Port: 7233            │    │
+│  └────────┬─────────┘              └──────────┬───────────────┘    │
+│           │                                   │                     │
+│           │         ┌─────────────────────────┘                     │
+│           │         │                                               │
+│  ─────────┼─────────┼────────────────────────────────────────────  │
+│           │         │                                               │
+│  Worker Layer                                                       │
+│  ┌────────▼─────────▼─────────────────────────────────────┐        │
+│  │              bunny-worker                              │        │
+│  │      (Temporal Worker + CDC Engine)                    │        │
+│  │  • Executes workflows and activities                   │        │
+│  │  • Connects to source/dest databases                   │        │
+│  │  • Decodes WAL records                                 │        │
+│  │  • Applies changes to destination                      │        │
+│  └────────┬───────────────────────────────────────────────┘        │
+│           │                                                         │
+│  ─────────┼──────────────────────────────────────────────────────  │
+│           │                                                         │
+│  Data Layer                                                         │
+│  ┌────────▼─────────┐                                               │
+│  │     catalog      │                                               │
+│  │  (PostgreSQL)    │                                               │
+│  │  Port: 5433      │                                               │
+│  │  • Stores peers  │                                               │
+│  │  • Stores mirrors│                                               │
+│  │  • Workflow state│                                               │
+│  └──────────────────┘                                               │
+│                                                                     │
+│  Test Databases (Development)                                       │
+│  ┌──────────────────┐              ┌──────────────────────────┐    │
+│  │   source-db      │              │      dest-db             │    │
+│  │   Port: 5434     │─────────────►│      Port: 5435          │    │
+│  │   (Test Source)  │  Replication │   (Test Destination)     │    │
+│  └──────────────────┘              └──────────────────────────┘    │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Service Roles
+
+### catalog (Internal State Database)
+
+- **Type**: PostgreSQL 16
+- **Port**: 5433
+- **Purpose**: Stores BunnyDB's internal state
+- **Schema**:
+  - `peers`: Database connection configurations
+  - `mirrors`: Mirror definitions and metadata
+  - `mirror_logs`: Operational logs
+  - Temporal execution history and state
+
+<Callout type="info">
+The catalog database is separate from your source and destination databases. It's purely for BunnyDB's internal bookkeeping.
+</Callout>
+
+### temporal (Workflow Orchestration)
+
+- **Type**: Temporal Server 1.24
+- **Port**: 7233
+- **Purpose**: Orchestrates long-running CDC workflows
+- **Features**:
+  - Durable execution (survives worker restarts)
+  - Signal-based control (Pause, Resume, Terminate)
+  - Automatic retries with exponential backoff
+  - `ContinueAsNew` for infinite workflow execution
+
+Temporal ensures that CDC workflows are fault-tolerant. If the worker crashes, Temporal will restart the workflow from the last checkpoint.
+
+### temporal-ui (Monitoring Dashboard)
+
+- **Type**: Temporal Web UI 2.26.2
+- **Port**: 8085
+- **Purpose**: Monitor and debug workflows
+- **Features**:
+  - View running workflows
+  - Inspect workflow history and state
+  - Debug activity failures
+  - Trigger manual workflow actions
+
+### bunny-api (REST API Server)
+
+- **Type**: Go HTTP server
+- **Port**: 8112 (HTTP), 8113 (metrics)
+- **Purpose**: Exposes REST API for managing BunnyDB
+- **Responsibilities**:
+  - Peer management (create, list, delete)
+  - Mirror management (create, pause, resume, resync)
+  - User authentication (JWT-based)
+  - Signal orchestration (translates HTTP requests to Temporal signals)
+
+### bunny-worker (CDC Worker)
+
+- **Type**: Go Temporal worker
+- **Purpose**: Executes CDC workflows and activities
+- **Responsibilities**:
+  - Connects to source and destination databases
+  - Manages replication slots and publications
+  - Decodes WAL records using `pgoutput`
+  - Batches and applies changes
+  - Handles snapshots, resyncs, and schema changes
+
+The worker is stateless and can be scaled horizontally for increased throughput.
+
+### bunny-ui (Web Dashboard)
+
+- **Type**: Next.js application
+- **Port**: 3000
+- **Purpose**: User-friendly web interface
+- **Features**:
+  - Create and manage peers/mirrors
+  - View mirror status and metrics
+  - Trigger operations (Pause, Resume, Resync)
+  - View logs and error messages
+
+### source-db & dest-db (Test Databases)
+
+- **Type**: PostgreSQL 16
+- **Ports**: 5434 (source), 5435 (destination)
+- **Purpose**: Built-in test databases for local development
+- **Configuration**: Pre-configured with `wal_level=logical` for replication
+
+<Callout type="warning">
+These test databases are for development only. In production, you'll configure BunnyDB to connect to your actual source and destination PostgreSQL instances.
+</Callout>
+
+## How CDC Works
+
+BunnyDB's CDC process consists of three phases:
+
+### Phase 1: Setup
+
+When you create a mirror, BunnyDB performs initial setup:
+
+1. **Validate connections**: Connect to source and destination to verify credentials
+2. **Create replication slot**: On the source database, create a named slot (e.g., `bunny_slot_my_mirror`)
+3. **Create publication**: Publish the tables to replicate (e.g., `bunny_pub_my_mirror`)
+4. **Capture schema**: Read table schemas, indexes, and foreign keys from source
+5. **Create destination schema**: Optionally create tables on destination if they don't exist
+
+**Replication Slot Format**: `bunny_slot_\{mirror_name\}`
+**Publication Format**: `bunny_pub_\{mirror_name\}`
+
+<Callout type="info">
+Replication slots prevent PostgreSQL from removing WAL segments that haven't been consumed yet. This ensures no data is lost even if the worker is offline temporarily.
+</Callout>
+
+### Phase 2: Snapshot (Optional)
+
+If `do_initial_snapshot: true`, BunnyDB performs a one-time data copy:
+
+1. **Start snapshot session**: Create a consistent snapshot using PostgreSQL's MVCC
+2. **Parallel table copy**: Use `COPY` to transfer existing data (parallelized across tables)
+3. **Foreign key handling**:
+   - Drop all FKs before copy
+   - Copy data without FK constraints
+   - Recreate FKs after all tables are copied
+   - Validate FKs to ensure referential integrity
+4. **Index replication**: Rebuild all indexes on destination tables
+5. **Capture LSN**: Record the WAL position to start CDC from
+
+The snapshot phase ensures the destination has a consistent point-in-time copy before streaming incremental changes.
+
+### Phase 3: Sync (Continuous Replication)
+
+After the snapshot (or immediately if skipped), BunnyDB enters continuous sync:
+
+1. **Stream WAL**: Connect to replication slot and stream logical WAL records
+2. **Decode changes**: Use `pgoutput` plugin to decode INSERT/UPDATE/DELETE operations
+3. **Batch records**: Group changes into batches (up to `max_batch_size`)
+4. **Apply batch**: Execute batched changes on destination using prepared statements
+5. **Commit LSN**: Update `last_lsn` in catalog to track progress
+6. **Repeat**: Continue streaming until paused or terminated
+
+**Batch Application**:
+- Changes are grouped by table
+- Foreign keys are deferred (`DEFERRABLE INITIALLY DEFERRED`) during batch application
+- Constraints are checked at transaction commit, ensuring consistency
+
+<Callout>
+BunnyDB uses `idle_timeout_seconds` to apply batches even if `max_batch_size` isn't reached. This ensures timely replication during low-traffic periods.
+</Callout>
+
+## Temporal Workflows
+
+BunnyDB uses four main workflows:
+
+### CDCFlowWorkflow (Main Orchestrator)
+
+**Purpose**: Long-running workflow that manages the entire mirror lifecycle
+
+**Lifecycle**:
+1. Initialize state from catalog
+2. Execute setup phase
+3. Optionally run SnapshotFlowWorkflow
+4. Enter continuous sync loop
+5. Handle signals (Pause, Resume, Resync, etc.)
+6. `ContinueAsNew` every 100 iterations to avoid history limits
+
+**Signal Handling**:
+- `PAUSE`: Stop syncing, retain slot, keep workflow alive
+- `RESUME`: Resume syncing from last LSN
+- `TERMINATE`: Drop slot/publication, stop workflow
+- `RESYNC`: Trigger full resync workflow
+- `RESYNC_TABLE`: Trigger single table resync
+- `RETRY_NOW`: Immediately retry failed workflow (bypass backoff)
+- `SYNC_SCHEMA`: Apply pending schema changes
+
+**ContinueAsNew**:
+Temporal workflows have a history limit (default 50K events). BunnyDB uses `ContinueAsNew` to start a new workflow execution with the current state, resetting history. This allows mirrors to run indefinitely.
+
+### SnapshotFlowWorkflow (Initial Data Copy)
+
+**Purpose**: Parallel snapshot of multiple tables
+
+**Process**:
+1. Start transaction with `REPEATABLE READ` isolation
+2. For each table:
+   - Create child `TableSnapshotActivity`
+   - Copy data using `COPY TO/FROM`
+3. Wait for all tables to complete
+4. Drop foreign keys before copy, recreate after
+5. Rebuild indexes on destination
+6. Return snapshot LSN for CDC to continue from
+
+**Parallelization**:
+Each table is copied in parallel using Temporal's child workflows, significantly reducing snapshot time for large databases.
+
+### TableResyncWorkflow (Single Table Re-copy)
+
+**Purpose**: Re-copy a single table without affecting other tables
+
+**Strategies**:
+
+**Truncate** (simpler, has downtime):
+1. Drop foreign keys referencing the table
+2. `TRUNCATE` destination table
+3. `COPY` data from source
+4. Rebuild indexes
+5. Recreate foreign keys
+
+**Swap** (zero-downtime):
+1. Create shadow table `\{table_name\}_resync`
+2. `COPY` data to shadow table
+3. Build indexes on shadow table
+4. Atomically rename:
+   - `\{table_name\}` → `\{table_name\}_old`
+   - `\{table_name\}_resync` → `\{table_name\}`
+5. Drop old table
+
+The swap strategy ensures queries continue running during resync.
+
+### FullSwapResyncWorkflow (Zero-Downtime Full Resync)
+
+**Purpose**: Resync all tables without downtime
+
+**Process**:
+1. For each table, create `\{table_name\}_resync` shadow table
+2. Copy data to all shadow tables in parallel
+3. Build indexes on all shadow tables
+4. Atomically rename all tables in a single transaction
+5. Drop old tables
+6. Restart CDCFlowWorkflow with new state
+
+<Callout type="info">
+Full swap resync is ideal for production environments where downtime is unacceptable. It requires approximately 2x the storage space during the resync.
+</Callout>
+
+## Data Flow
+
+The complete data flow for a mirror:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Source Database                            │
+│  ┌──────────┐   ┌─────────────┐   ┌────────────────────┐       │
+│  │  Tables  │──►│  WAL Writer │──►│  Replication Slot  │       │
+│  └──────────┘   └─────────────┘   └────────┬───────────┘       │
+└──────────────────────────────────────────────┼──────────────────┘
+                                               │
+                                               │ pgoutput protocol
+                                               │ (logical replication)
+                                               ▼
+                        ┌──────────────────────────────────┐
+                        │      bunny-worker                │
+                        │                                  │
+                        │  1. Stream WAL from slot         │
+                        │  2. Decode pgoutput records      │
+                        │  3. Batch changes                │
+                        │  4. Apply to destination         │
+                        │  5. Update last_lsn in catalog   │
+                        └──────────┬───────────────────────┘
+                                   │
+                                   │ SQL INSERT/UPDATE/DELETE
+                                   │ (batched, deferred FKs)
+                                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Destination Database                          │
+│  ┌──────────────────────┐                                       │
+│  │  Replicated Tables   │                                       │
+│  │  • Same schema       │                                       │
+│  │  • Same indexes      │                                       │
+│  │  • Same foreign keys │                                       │
+│  └──────────────────────┘                                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Signal-Based Control
+
+BunnyDB uses Temporal signals to control mirrors without restarting workflows:
+
+**How it works**:
+1. User triggers action via UI or API (e.g., "Pause Mirror")
+2. `bunny-api` sends HTTP request to appropriate endpoint
+3. API handler sends Temporal signal to workflow
+4. Workflow receives signal in next iteration
+5. Workflow transitions state and executes appropriate logic
+6. State change is persisted to catalog
+
+**Example: Pause Flow**
+
+```
+User (UI)  →  POST /v1/mirrors/my_mirror/pause  →  bunny-api
+                                                       ↓
+                                            Signal "PAUSE" sent to Temporal
+                                                       ↓
+                                            CDCFlowWorkflow receives signal
+                                                       ↓
+                                            State: RUNNING → PAUSED
+                                                       ↓
+                                            Worker stops consuming WAL
+                                            (slot retains position)
+```
+
+<Callout>
+Signals are idempotent. Sending "PAUSE" to an already paused mirror is safe and has no effect.
+</Callout>
+
+## Fault Tolerance
+
+BunnyDB is designed for reliability:
+
+### Worker Failures
+
+If the worker crashes:
+1. Temporal detects missed heartbeats
+2. Workflow is rescheduled on another worker
+3. Worker resumes from last committed LSN
+4. No data loss (replication slot retained)
+
+### Database Failures
+
+**Source database down**:
+- Worker retries connection with exponential backoff
+- Replication slot prevents WAL cleanup
+- Mirror resumes automatically when source recovers
+
+**Destination database down**:
+- Batches fail and retry
+- Changes accumulate in WAL
+- Mirror catches up when destination recovers
+
+### Network Partitions
+
+- Temporal's built-in retry policies handle transient failures
+- Long-term partitions require manual intervention
+- Use `RetryNow` signal to bypass backoff after network recovery
+
+## Performance Considerations
+
+### Batch Size Tuning
+
+- **Small batches** (100-500): Lower latency, higher transaction overhead
+- **Large batches** (1000-5000): Higher throughput, potential lag spikes
+- **Default**: 1000 (balanced for most workloads)
+
+### Idle Timeout
+
+- Controls how long to wait before applying a partial batch
+- Lower values (5-10s): Near real-time replication
+- Higher values (60-120s): Better throughput for high-volume workloads
+
+### Parallel Snapshots
+
+Snapshot speed scales with the number of tables. For large databases:
+- Increase Temporal worker count
+- Tune PostgreSQL's `max_worker_processes`
+- Consider partitioning very large tables
+
+### Monitoring
+
+Key metrics to monitor:
+- **Replication lag**: `last_lsn` vs. current WAL position
+- **Batch application time**: Activity duration in Temporal UI
+- **Error rate**: Check Temporal for failed activities
+- **WAL disk usage**: Monitor source database's `pg_wal` directory
+
+<Callout type="warning">
+High replication lag can cause WAL accumulation on the source database. If lag exceeds `wal_keep_size`, the replication slot may become invalid.
+</Callout>
+
+## Next Steps
+
+- Learn about [Concepts](/concepts) like LSN, batches, and mirror states
+- Explore the [API Reference](/api-reference) for advanced operations
+- Review [Guides](/guides) for common operational tasks

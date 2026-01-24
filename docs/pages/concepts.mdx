@@ -1,0 +1,487 @@
+import { Callout } from 'nextra/components'
+
+# Concepts
+
+This page explains the core concepts and terminology used throughout BunnyDB.
+
+## Peers
+
+**Peers** are database connection configurations that represent either a source or destination PostgreSQL database.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique identifier for the peer (e.g., "prod-primary", "analytics-replica") |
+| `host` | string | Database hostname or IP address |
+| `port` | integer | Database port (default: 5432) |
+| `user` | string | PostgreSQL username |
+| `password` | string | PostgreSQL password (encrypted at rest) |
+| `database` | string | Target database name |
+| `ssl_mode` | string | SSL mode: `disable`, `require`, `verify-ca`, `verify-full` |
+
+### Example
+
+```json
+{
+  "name": "prod-primary",
+  "host": "db.example.com",
+  "port": 5432,
+  "user": "replication_user",
+  "password": "secure_password",
+  "database": "production",
+  "ssl_mode": "verify-full"
+}
+```
+
+<Callout type="info">
+Peer credentials are stored in the catalog database. Use strong passwords and enable SSL for production deployments.
+</Callout>
+
+### Requirements
+
+**Source Peer:**
+- Must have `wal_level = logical` in `postgresql.conf`
+- User must have `REPLICATION` privilege
+- Sufficient `max_replication_slots` and `max_wal_senders`
+
+**Destination Peer:**
+- User must have `CREATE` privileges on target schemas
+- Sufficient disk space for replicated data
+
+## Mirrors
+
+**Mirrors** are replication pipelines that continuously sync data from a source peer to a destination peer.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique mirror identifier |
+| `source_peer` | string | Name of the source peer |
+| `destination_peer` | string | Name of the destination peer |
+| `table_mappings` | array | List of tables to replicate (see below) |
+| `do_initial_snapshot` | boolean | Whether to copy existing data before CDC |
+| `max_batch_size` | integer | Maximum changes per batch (default: 1000) |
+| `idle_timeout_seconds` | integer | Apply batch after this many seconds of inactivity (default: 60) |
+| `replicate_indexes` | boolean | Whether to replicate indexes (default: true) |
+
+### Example
+
+```json
+{
+  "name": "prod_to_analytics",
+  "source_peer": "prod-primary",
+  "destination_peer": "analytics-replica",
+  "table_mappings": [
+    {
+      "source_table": "public.users",
+      "destination_table": "public.users"
+    },
+    {
+      "source_table": "public.orders",
+      "destination_table": "public.orders",
+      "exclude_columns": ["credit_card_number"]
+    }
+  ],
+  "do_initial_snapshot": true,
+  "max_batch_size": 2000,
+  "idle_timeout_seconds": 30,
+  "replicate_indexes": true
+}
+```
+
+<Callout>
+Each mirror runs as a long-lived Temporal workflow. You can have multiple mirrors per peer, allowing selective replication of different table sets.
+</Callout>
+
+## Table Mappings
+
+**Table Mappings** define which tables to replicate and how they map from source to destination.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_table` | string | Fully-qualified source table name (e.g., `public.users`) |
+| `destination_table` | string | Fully-qualified destination table name |
+| `partition_key` | string | Column to use for partitioned replication (optional) |
+| `exclude_columns` | array | List of columns to exclude from replication |
+
+### Examples
+
+**Simple mapping** (same table name):
+
+```json
+{
+  "source_table": "public.users",
+  "destination_table": "public.users"
+}
+```
+
+**Different schema**:
+
+```json
+{
+  "source_table": "public.users",
+  "destination_table": "analytics.dim_users"
+}
+```
+
+**Exclude sensitive columns**:
+
+```json
+{
+  "source_table": "public.users",
+  "destination_table": "public.users",
+  "exclude_columns": ["password_hash", "ssn"]
+}
+```
+
+<Callout type="warning">
+Excluded columns must be nullable or have default values on the destination. BunnyDB will not replicate data for these columns.
+</Callout>
+
+## LSN (Log Sequence Number)
+
+**LSN** is PostgreSQL's internal identifier for a position in the Write-Ahead Log (WAL). It's a 64-bit integer that increases monotonically as transactions are written.
+
+### Format
+
+LSNs are typically displayed in hex format: `0/1A2B3C4D`
+
+- First part: WAL segment file number
+- Second part: Byte offset within the segment
+
+### BunnyDB Usage
+
+BunnyDB tracks the `last_lsn` for each mirror to remember where replication should resume from:
+
+- **Initial snapshot**: Captures LSN at start of snapshot transaction
+- **CDC sync**: Updates `last_lsn` after each successful batch application
+- **Resume**: Starts replication from `last_lsn` when resuming a paused mirror
+
+### Viewing LSN
+
+Get the current LSN on source database:
+
+```sql
+SELECT pg_current_wal_lsn();
+```
+
+Get the mirror's last processed LSN:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8112/v1/mirrors/my_mirror | jq .last_lsn
+```
+
+<Callout type="info">
+Replication lag can be calculated by comparing the source's current LSN with the mirror's `last_lsn`. Large differences indicate the mirror is falling behind.
+</Callout>
+
+## Batches
+
+**Batches** are groups of WAL changes that are applied to the destination database together in a single transaction.
+
+### Why Batching?
+
+- **Performance**: Reduces transaction overhead compared to applying each change individually
+- **Consistency**: Ensures related changes are applied atomically
+- **Ordering**: Maintains transaction boundaries when possible
+
+### Batch Controls
+
+**max_batch_size**:
+- Maximum number of changes in a single batch
+- Larger batches = higher throughput, more memory usage
+- Default: 1000
+
+**idle_timeout_seconds**:
+- Apply batch after this many seconds of inactivity
+- Prevents lag during low-traffic periods
+- Default: 60 seconds
+
+### Example Batch Application
+
+Suppose the source database receives these operations:
+
+```sql
+INSERT INTO users (id, email) VALUES (1, 'alice@example.com');
+INSERT INTO users (id, email) VALUES (2, 'bob@example.com');
+UPDATE users SET email = 'alice.new@example.com' WHERE id = 1;
+DELETE FROM users WHERE id = 2;
+```
+
+BunnyDB will batch these into a single transaction on the destination:
+
+```sql
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;  -- Defer FK checks
+INSERT INTO users (id, email) VALUES (1, 'alice@example.com');
+INSERT INTO users (id, email) VALUES (2, 'bob@example.com');
+UPDATE users SET email = 'alice.new@example.com' WHERE id = 1;
+DELETE FROM users WHERE id = 2;
+COMMIT;  -- FK constraints validated here
+```
+
+<Callout>
+Deferred constraints are critical for maintaining referential integrity when operations within a batch reference each other.
+</Callout>
+
+## Replication Slots
+
+**Replication Slots** are PostgreSQL's mechanism for preventing WAL segments from being deleted before a replica has consumed them.
+
+### Naming Convention
+
+BunnyDB creates slots with the format: `bunny_slot_\{mirror_name\}`
+
+Example: For a mirror named `prod_to_analytics`, the slot is `bunny_slot_prod_to_analytics`.
+
+### How They Work
+
+1. When a mirror is created, BunnyDB creates a replication slot on the source
+2. PostgreSQL tracks the slot's LSN position
+3. WAL segments before the slot's position are retained, even if `wal_keep_size` is exceeded
+4. When the mirror consumes WAL, the slot position advances
+5. PostgreSQL can then clean up consumed WAL segments
+
+### Viewing Slots
+
+On the source database:
+
+```sql
+SELECT slot_name, active, restart_lsn, confirmed_flush_lsn
+FROM pg_replication_slots
+WHERE slot_name LIKE 'bunny_slot_%';
+```
+
+<Callout type="warning">
+**Inactive slots** can cause WAL accumulation. If a mirror is paused for too long, disk space may fill up. Monitor slot lag regularly in production.
+</Callout>
+
+### Cleanup
+
+Slots are automatically dropped when:
+- Mirror is terminated via `DELETE /v1/mirrors/:name`
+- `TERMINATE` signal is sent
+
+If a mirror crashes and the slot remains, manually drop it:
+
+```sql
+SELECT pg_drop_replication_slot('bunny_slot_my_mirror');
+```
+
+## Publications
+
+**Publications** define which tables are available for logical replication on the source database.
+
+### Naming Convention
+
+BunnyDB creates publications with the format: `bunny_pub_\{mirror_name\}`
+
+Example: For a mirror named `prod_to_analytics`, the publication is `bunny_pub_prod_to_analytics`.
+
+### How They Work
+
+1. BunnyDB creates a publication containing the replicated tables
+2. The publication defines which DML operations are captured (INSERT, UPDATE, DELETE)
+3. Logical replication decoding uses the publication to filter WAL records
+4. Only changes to published tables are sent to the replication slot
+
+### Viewing Publications
+
+On the source database:
+
+```sql
+-- List publications
+SELECT pubname, puballtables
+FROM pg_publication
+WHERE pubname LIKE 'bunny_pub_%';
+
+-- List tables in a publication
+SELECT schemaname, tablename
+FROM pg_publication_tables
+WHERE pubname = 'bunny_pub_my_mirror';
+```
+
+### Cleanup
+
+Publications are automatically dropped when the mirror is terminated.
+
+## Mirror States
+
+Mirrors transition through several states during their lifecycle:
+
+| State | Description |
+|-------|-------------|
+| `CREATED` | Mirror configuration created, workflow not yet started |
+| `SETTING_UP` | Creating replication slot and publication on source |
+| `SNAPSHOT` | Copying initial data (if `do_initial_snapshot` is true) |
+| `RUNNING` | Actively replicating changes via CDC |
+| `PAUSED` | Replication paused by user, slot retained |
+| `PAUSING` | Transitioning from RUNNING to PAUSED |
+| `FAILED` | Workflow encountered an unrecoverable error |
+| `RESYNCING` | Full resync in progress (all tables) |
+| `SYNCING_SCHEMA` | Applying schema changes (DDL sync) |
+| `TERMINATING` | Cleaning up slot/publication before shutdown |
+| `TERMINATED` | Mirror stopped, slot/publication dropped |
+
+### State Transitions
+
+```
+CREATED → SETTING_UP → SNAPSHOT → RUNNING
+                            ↓         ↓
+                          FAILED   PAUSED
+                                      ↓
+                                  RUNNING
+                                      ↓
+                                RESYNCING → RUNNING
+                                      ↓
+                             SYNCING_SCHEMA → RUNNING
+                                      ↓
+                               TERMINATING → TERMINATED
+```
+
+<Callout>
+Use `GET /v1/mirrors/:name` to check the current state and any error messages.
+</Callout>
+
+## Signals
+
+**Signals** are Temporal's mechanism for sending commands to running workflows without restarting them.
+
+### Available Signals
+
+| Signal | Description | Endpoint |
+|--------|-------------|----------|
+| `PAUSE` | Pause replication, retain slot | `POST /v1/mirrors/:name/pause` |
+| `RESUME` | Resume replication from last LSN | `POST /v1/mirrors/:name/resume` |
+| `TERMINATE` | Stop mirror and drop slot/publication | `DELETE /v1/mirrors/:name` |
+| `RESYNC` | Full resync of all tables | `POST /v1/mirrors/:name/resync` |
+| `RESYNC_TABLE` | Resync a single table | `POST /v1/mirrors/:name/resync` (with `table_name`) |
+| `RETRY_NOW` | Bypass Temporal backoff, retry immediately | `POST /v1/mirrors/:name/retry` |
+| `SYNC_SCHEMA` | Apply pending schema changes | `POST /v1/mirrors/:name/sync-schema` |
+
+### Signal Semantics
+
+- Signals are **idempotent**: Sending the same signal multiple times is safe
+- Signals are **asynchronous**: The API returns immediately; check mirror state for completion
+- Signals are **queued**: If a signal is already in progress, new signals are rejected with HTTP 409
+
+### Example: Pause and Resume
+
+```bash
+# Pause mirror
+curl -X POST http://localhost:8112/v1/mirrors/my_mirror/pause \
+  -H "Authorization: Bearer $TOKEN"
+
+# Verify state
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8112/v1/mirrors/my_mirror | jq .status
+# Output: "PAUSED"
+
+# Resume mirror
+curl -X POST http://localhost:8112/v1/mirrors/my_mirror/resume \
+  -H "Authorization: Bearer $TOKEN"
+
+# Verify state
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8112/v1/mirrors/my_mirror | jq .status
+# Output: "RUNNING"
+```
+
+<Callout type="info">
+Signals are handled within the workflow loop, so there may be a short delay (up to `idle_timeout_seconds`) before the signal takes effect.
+</Callout>
+
+## Resync Strategies
+
+When resyncing tables, BunnyDB supports two strategies:
+
+### Truncate Strategy
+
+**Pros:**
+- Simpler implementation
+- Lower disk space usage
+- Faster for small tables
+
+**Cons:**
+- Destination table is unavailable during resync (downtime)
+- Queries fail until resync completes
+
+**Process:**
+1. Drop all foreign keys referencing the table
+2. `TRUNCATE` destination table
+3. `COPY` data from source
+4. Rebuild indexes on destination
+5. Recreate foreign keys
+6. Validate foreign keys
+
+**When to use:**
+- Non-production environments
+- Maintenance windows are acceptable
+- Small tables (resync completes quickly)
+
+### Swap Strategy
+
+**Pros:**
+- Zero downtime (queries continue during resync)
+- Atomic cutover
+- Safe rollback if resync fails
+
+**Cons:**
+- Requires ~2x disk space temporarily
+- Slightly more complex
+- Longer index build time (on shadow table)
+
+**Process:**
+1. Create shadow table: `\{table_name\}_resync`
+2. `COPY` data from source to shadow table
+3. Build indexes on shadow table
+4. Atomic rename in a transaction:
+   ```sql
+   BEGIN;
+   ALTER TABLE {table_name} RENAME TO {table_name}_old;
+   ALTER TABLE {table_name}_resync RENAME TO {table_name};
+   COMMIT;
+   ```
+5. Drop old table: `\{table_name\}_old`
+
+**When to use:**
+- Production environments
+- Zero-downtime requirement
+- Large tables (downtime would be significant)
+
+<Callout type="warning">
+During swap resync, ensure sufficient disk space for the shadow table plus indexes. Monitor with `df -h` on the destination host.
+</Callout>
+
+### Choosing a Strategy
+
+Specify the strategy in the resync request:
+
+```bash
+# Truncate strategy (simpler, has downtime)
+curl -X POST http://localhost:8112/v1/mirrors/my_mirror/resync \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"strategy": "truncate"}'
+
+# Swap strategy (zero-downtime)
+curl -X POST http://localhost:8112/v1/mirrors/my_mirror/resync \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"strategy": "swap"}'
+```
+
+**Default**: If not specified, BunnyDB uses `swap` for production safety.
+
+## Next Steps
+
+Now that you understand BunnyDB's core concepts:
+
+- Review the [Architecture](/architecture) page for how these concepts work together
+- Explore the [API Reference](/api-reference) for detailed endpoint documentation
+- Check out [Guides](/guides) for common operational scenarios

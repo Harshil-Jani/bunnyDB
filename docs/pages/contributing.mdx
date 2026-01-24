@@ -1,0 +1,690 @@
+import { Callout, Steps, Tabs } from 'nextra/components'
+
+# Contributing
+
+Thank you for your interest in contributing to BunnyDB! This guide will help you set up a development environment, understand the codebase, and submit contributions.
+
+## Development Setup
+
+Get BunnyDB running locally for development.
+
+<Steps>
+
+### Clone the repository
+
+```bash
+git clone https://github.com/yourusername/bunnyDB.git
+cd bunnyDB
+```
+
+### Start the development environment
+
+```bash
+docker compose up -d
+```
+
+This starts:
+- Catalog PostgreSQL database
+- Temporal server and UI
+- BunnyDB API (port 8112)
+- BunnyDB worker
+- UI development server (if configured)
+
+### Verify everything is running
+
+```bash
+docker compose ps
+```
+
+All services should be in the "Up" state.
+
+### Access the services
+
+- **API**: http://localhost:8112
+- **Temporal UI**: http://localhost:8085
+- **UI**: http://localhost:3000 (if running)
+- **Docs**: http://localhost:3001 (if running)
+
+</Steps>
+
+<Callout type="info">
+The default admin credentials are `admin:admin`. The catalog database uses `postgres:bunnydb`.
+</Callout>
+
+## Project Structure
+
+BunnyDB is organized into several main directories:
+
+```
+bunnyDB/
+├── flow/              # Go backend (API + Worker)
+│   ├── api/          # HTTP API handlers and routes
+│   ├── activities/   # Temporal activities (snapshot, CDC)
+│   ├── workflows/    # Temporal workflows (mirror orchestration)
+│   ├── model/        # Database models and schema
+│   ├── shared/       # Shared utilities and types
+│   ├── connectors/   # PostgreSQL connection management
+│   └── catalog/      # Catalog database operations
+├── ui/               # Next.js frontend
+│   ├── app/          # Next.js app router pages
+│   ├── components/   # React components
+│   └── lib/          # Frontend utilities and API client
+├── docs/             # Documentation site (Nextra)
+│   └── pages/        # Documentation pages (MDX)
+└── volumes/          # Docker volume configurations
+    ├── postgres/     # PostgreSQL init scripts
+    └── temporal/     # Temporal configuration
+```
+
+### Flow (Backend)
+
+The `flow/` directory contains the Go backend.
+
+#### Key Directories
+
+**`api/`** - HTTP API
+- `routes.go`: API route definitions
+- `handlers/`: HTTP request handlers
+- `auth/`: JWT authentication middleware
+- Serves the REST API on port 8112
+
+**`activities/`** - Temporal Activities
+- `snapshot.go`: Initial table snapshot logic
+- `cdc.go`: Change data capture activities
+- `schema.go`: Schema synchronization
+- Long-running operations executed by workers
+
+**`workflows/`** - Temporal Workflows
+- `mirror.go`: Main mirror replication workflow
+- Orchestrates snapshot, CDC, and control signals
+- Handles retries and error recovery
+
+**`model/`** - Database Models
+- `peer.go`: Peer database configuration
+- `mirror.go`: Mirror metadata
+- `user.go`: User accounts
+- `log.go`: Structured logs
+- Uses GORM for ORM
+
+**`shared/`** - Shared Code
+- `config.go`: Environment variable configuration
+- `postgres.go`: PostgreSQL utilities
+- `temporal.go`: Temporal client setup
+- `types.go`: Common types and constants
+
+**`connectors/`** - Database Connectors
+- `postgres_connector.go`: PostgreSQL connection pooling
+- `replication.go`: Logical replication protocol
+- Manages connections to peers and catalog
+
+**`catalog/`** - Catalog Operations
+- `migrations/`: Database migrations
+- `queries.go`: Catalog database queries
+- Stores BunnyDB metadata
+
+### UI (Frontend)
+
+The `ui/` directory contains the Next.js web interface.
+
+#### Key Directories
+
+**`app/`** - Next.js Pages
+- `page.tsx`: Dashboard
+- `mirrors/`: Mirror management pages
+- `peers/`: Peer management pages
+- `users/`: User management pages
+- Uses Next.js 13+ app router
+
+**`components/`** - React Components
+- `MirrorCard.tsx`: Mirror status display
+- `PeerForm.tsx`: Peer creation/edit form
+- `LogViewer.tsx`: Log display component
+- Reusable UI components
+
+**`lib/`** - Frontend Utilities
+- `api.ts`: API client (fetch wrapper)
+- `auth.ts`: Authentication helpers
+- `utils.ts`: Common utilities
+
+### Docs (Documentation)
+
+The `docs/` directory contains this documentation site built with Nextra.
+
+**`pages/`** - Documentation Pages
+- Written in MDX (Markdown + JSX)
+- Organized by topic (guides, API reference, etc.)
+- Auto-generated navigation from `_meta.json` files
+
+## Building the Project
+
+### Building the Backend
+
+<Tabs items={['Docker', 'Local Go']}>
+<Tabs.Tab>
+Build and run with Docker Compose:
+
+```bash
+docker compose build bunny-api bunny-worker
+docker compose up -d bunny-api bunny-worker
+```
+</Tabs.Tab>
+<Tabs.Tab>
+Build locally with Go (requires Go 1.21+):
+
+```bash
+cd flow
+
+# Install dependencies
+go mod download
+
+# Build API
+go build -o bin/api ./cmd/api
+
+# Build Worker
+go build -o bin/worker ./cmd/worker
+
+# Run API
+./bin/api
+
+# Run Worker (in another terminal)
+./bin/worker
+```
+</Tabs.Tab>
+</Tabs>
+
+### Building the Frontend
+
+<Tabs items={['Docker', 'Local npm']}>
+<Tabs.Tab>
+```bash
+docker compose build ui
+docker compose up -d ui
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```bash
+cd ui
+
+# Install dependencies
+npm install
+
+# Development mode
+npm run dev
+
+# Production build
+npm run build
+npm start
+```
+</Tabs.Tab>
+</Tabs>
+
+### Building the Documentation
+
+```bash
+cd docs
+
+# Install dependencies
+npm install
+
+# Development mode
+npm run dev
+
+# Production build
+npm run build
+```
+
+## Testing
+
+### Backend Tests
+
+```bash
+cd flow
+
+# Run all tests
+go test ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run tests for specific package
+go test ./activities
+
+# Run with verbose output
+go test -v ./...
+```
+
+### Frontend Tests
+
+```bash
+cd ui
+
+# Run tests
+npm test
+
+# Run tests with coverage
+npm run test:coverage
+
+# Run tests in watch mode
+npm run test:watch
+```
+
+### Integration Tests
+
+```bash
+# Ensure dev environment is running
+docker compose up -d
+
+# Run integration tests
+cd flow
+go test -tags=integration ./tests/integration
+```
+
+<Callout type="info">
+Integration tests require a running BunnyDB environment with Temporal and catalog database.
+</Callout>
+
+## Making Changes
+
+### Code Style
+
+**Go**
+- Follow [Effective Go](https://golang.org/doc/effective_go) guidelines
+- Use `gofmt` for formatting: `go fmt ./...`
+- Use `golint` for linting: `golint ./...`
+- Write descriptive comments for exported functions
+
+**TypeScript/React**
+- Use ESLint and Prettier (configured in `ui/`)
+- Run linter: `npm run lint`
+- Format code: `npm run format`
+
+### Adding a New API Endpoint
+
+<Steps>
+
+### Define the route
+
+In `flow/api/routes.go`:
+
+```go
+func SetupRoutes(r *gin.Engine) {
+    api := r.Group("/v1")
+
+    // Add your route
+    api.GET("/my-endpoint", handlers.MyHandler)
+}
+```
+
+### Create the handler
+
+In `flow/api/handlers/my_handler.go`:
+
+```go
+package handlers
+
+import (
+    "github.com/gin-gonic/gin"
+    "net/http"
+)
+
+func MyHandler(c *gin.Context) {
+    // Handler logic
+    c.JSON(http.StatusOK, gin.H{
+        "message": "Success",
+    })
+}
+```
+
+### Add tests
+
+In `flow/api/handlers/my_handler_test.go`:
+
+```go
+package handlers
+
+import (
+    "testing"
+    "net/http/httptest"
+    "github.com/stretchr/testify/assert"
+)
+
+func TestMyHandler(t *testing.T) {
+    // Test implementation
+}
+```
+
+### Document the endpoint
+
+Add to the appropriate API reference page in `docs/pages/api-reference/`.
+
+</Steps>
+
+### Adding a New Temporal Activity
+
+<Steps>
+
+### Define the activity
+
+In `flow/activities/my_activity.go`:
+
+```go
+package activities
+
+import (
+    "context"
+    "go.temporal.io/sdk/activity"
+)
+
+type MyActivityInput struct {
+    Param1 string
+}
+
+type MyActivityOutput struct {
+    Result string
+}
+
+func MyActivity(ctx context.Context, input MyActivityInput) (*MyActivityOutput, error) {
+    // Send heartbeats for long operations
+    activity.RecordHeartbeat(ctx, "progress")
+
+    // Activity logic
+
+    return &MyActivityOutput{
+        Result: "success",
+    }, nil
+}
+```
+
+### Register the activity
+
+In `flow/cmd/worker/main.go`:
+
+```go
+w.RegisterActivity(activities.MyActivity)
+```
+
+### Use in workflow
+
+In `flow/workflows/mirror.go`:
+
+```go
+var result activities.MyActivityOutput
+err := workflow.ExecuteActivity(ctx, activities.MyActivity, activities.MyActivityInput{
+    Param1: "value",
+}).Get(ctx, &result)
+```
+
+</Steps>
+
+### Adding a Database Migration
+
+<Steps>
+
+### Create migration file
+
+In `flow/catalog/migrations/`:
+
+```go
+package migrations
+
+func init() {
+    Migrations = append(Migrations, Migration{
+        Version: "003_add_my_table",
+        Up: `
+            CREATE TABLE my_table (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        `,
+        Down: `
+            DROP TABLE my_table;
+        `,
+    })
+}
+```
+
+### Run migration
+
+Migrations run automatically on API startup, or manually:
+
+```bash
+cd flow
+go run ./cmd/migrate
+```
+
+</Steps>
+
+## Pull Request Guidelines
+
+### Branch Naming
+
+Use descriptive branch names with prefixes:
+
+- `feature/` - New features
+- `fix/` - Bug fixes
+- `docs/` - Documentation changes
+- `refactor/` - Code refactoring
+- `test/` - Test additions/changes
+
+Examples:
+- `feature/add-mirror-filters`
+- `fix/replication-slot-leak`
+- `docs/update-api-reference`
+
+### Commit Messages
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer]
+```
+
+**Types**:
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `refactor`: Code refactoring
+- `test`: Test changes
+- `chore`: Build/tooling changes
+
+**Examples**:
+
+```
+feat(api): add filter parameter to mirrors endpoint
+
+Add support for filtering mirrors by status in GET /v1/mirrors.
+Allows clients to query only running or error mirrors.
+```
+
+```
+fix(worker): prevent heartbeat timeout during large snapshots
+
+Add heartbeats in snapshot partition loop to prevent Temporal
+activity timeout on tables with millions of rows.
+
+Fixes #123
+```
+
+### Pull Request Process
+
+<Steps>
+
+### Create a feature branch
+
+```bash
+git checkout -b feature/my-feature
+```
+
+### Make your changes
+
+Write code, tests, and documentation.
+
+### Test your changes
+
+```bash
+# Backend tests
+cd flow && go test ./...
+
+# Frontend tests
+cd ui && npm test
+
+# Manual testing
+docker compose up -d
+```
+
+### Commit your changes
+
+```bash
+git add .
+git commit -m "feat(api): add my feature"
+```
+
+### Push and create PR
+
+```bash
+git push origin feature/my-feature
+```
+
+Open a pull request on GitHub.
+
+### Include in your PR
+
+- **Description**: What does this PR do and why?
+- **Testing**: How did you test the changes?
+- **Screenshots**: For UI changes
+- **Breaking changes**: Note any breaking changes
+- **Related issues**: Link to related issues
+
+</Steps>
+
+### PR Checklist
+
+Before submitting, ensure:
+
+- [ ] Code follows project style guidelines
+- [ ] Tests added for new functionality
+- [ ] All tests pass
+- [ ] Documentation updated (API docs, guides, etc.)
+- [ ] Commit messages follow Conventional Commits
+- [ ] No unnecessary files committed (build artifacts, IDE files)
+- [ ] PR description is clear and complete
+
+<Callout type="info">
+PRs are reviewed by maintainers. Be responsive to feedback and make requested changes promptly.
+</Callout>
+
+## Running Pre-commit Checks
+
+Install pre-commit hooks to catch issues before committing:
+
+```bash
+# Install pre-commit (if not already installed)
+pip install pre-commit
+
+# Install hooks
+pre-commit install
+
+# Run manually
+pre-commit run --all-files
+```
+
+Pre-commit hooks run:
+- Go fmt and lint
+- TypeScript/React ESLint and Prettier
+- Markdown linting
+- File size checks
+- Trailing whitespace removal
+
+## Development Tips
+
+### Hot Reload
+
+**Backend**: Use `air` for hot reload:
+
+```bash
+cd flow
+
+# Install air
+go install github.com/cosmtrek/air@latest
+
+# Run with hot reload
+air
+```
+
+**Frontend**: Next.js has built-in hot reload:
+
+```bash
+cd ui
+npm run dev
+```
+
+### Debugging
+
+**Backend**:
+- Use `fmt.Println()` or proper logging
+- Use Delve debugger: `dlv debug ./cmd/api`
+- Check Docker logs: `docker compose logs -f bunny-worker`
+
+**Frontend**:
+- Use browser DevTools
+- React DevTools extension
+- `console.log()` debugging
+
+**Temporal**:
+- Use Temporal UI: http://localhost:8085
+- View workflow history and activity logs
+- Inspect workflow inputs/outputs
+
+### Common Development Tasks
+
+**Reset catalog database**:
+
+```bash
+docker compose down -v
+docker compose up -d catalog
+```
+
+**View logs**:
+
+```bash
+# All services
+docker compose logs -f
+
+# Specific service
+docker compose logs -f bunny-worker
+
+# Last 100 lines
+docker compose logs --tail=100 bunny-api
+```
+
+**Connect to catalog database**:
+
+```bash
+docker compose exec catalog psql -U postgres -d bunnydb
+```
+
+**Restart a service**:
+
+```bash
+docker compose restart bunny-api
+```
+
+## Getting Help
+
+- **Documentation**: Read this documentation thoroughly
+- **GitHub Issues**: Search for existing issues or open a new one
+- **GitHub Discussions**: Ask questions and discuss ideas
+- **Code Comments**: Read inline code comments for context
+
+## License
+
+By contributing to BunnyDB, you agree that your contributions will be licensed under the same license as the project.
+
+<Callout type="info">
+Thank you for contributing to BunnyDB! Your contributions help make PostgreSQL replication more accessible and reliable.
+</Callout>

@@ -1,0 +1,261 @@
+import { Callout, Steps } from 'nextra/components'
+
+# Creating Your First Mirror
+
+A **mirror** is a replication job that continuously syncs data from a source peer to a destination peer. This guide walks you through creating your first mirror.
+
+## Prerequisites
+
+Before creating a mirror, ensure:
+
+1. **Source and destination peers are created** ([see Setting Up Peers](/guides/setting-up-peers))
+2. **Source database is configured for logical replication** (wal_level=logical)
+3. **You have an admin role token** for authentication
+
+## Mirror Configuration Parameters
+
+Understanding these parameters is crucial for optimal replication:
+
+### Snapshot Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `do_initial_snapshot` | boolean | true | Whether to copy existing data before starting CDC |
+| `snapshot_num_rows_per_partition` | number | 250000 | Rows per partition during parallel snapshot |
+| `snapshot_max_parallel_workers` | number | 8 | Max concurrent workers per table |
+| `snapshot_num_tables_in_parallel` | number | 4 | Number of tables to snapshot simultaneously |
+
+<Callout type="info">
+If your source tables are already empty or you only want future changes, set `do_initial_snapshot: false` to skip the COPY phase.
+</Callout>
+
+### CDC Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_batch_size` | number | 1000 | Maximum changes to batch before applying |
+| `idle_timeout_seconds` | number | 60 | Flush interval when changes are below batch size |
+
+**Tuning Tips:**
+- **High throughput**: Increase `max_batch_size` to 5000-10000
+- **Low latency**: Decrease `idle_timeout_seconds` to 10-30 seconds
+- **Large tables**: Increase `snapshot_num_rows_per_partition` and `snapshot_max_parallel_workers`
+
+### Schema Replication
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `replicate_indexes` | boolean | true | Copy indexes from source to destination |
+| `replicate_foreign_keys` | boolean | true | Copy foreign key constraints |
+
+### Resync Strategy
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `resync_strategy` | string | "truncate" | Strategy for table resync: `"truncate"` or `"swap"` |
+
+- **truncate**: Faster, but destination table is unavailable during resync
+- **swap**: Zero-downtime, but requires 2x disk space temporarily
+
+See [Zero-Downtime Swap Resync](/guides/zero-downtime-swap-resync) for details.
+
+## Creating a Mirror
+
+<Steps>
+
+### Define Table Mappings
+
+Specify which tables to replicate and how to map them:
+
+```json
+[
+  {
+    "source_table": "public.users",
+    "destination_table": "public.users"
+  },
+  {
+    "source_table": "public.orders",
+    "destination_table": "public.orders",
+    "partition_key": "user_id",
+    "exclude_columns": ["internal_notes", "debug_info"]
+  },
+  {
+    "source_table": "analytics.events",
+    "destination_table": "public.events"
+  }
+]
+```
+
+**Table Mapping Fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `source_table` | Yes | Source table in `schema.table` format |
+| `destination_table` | Yes | Destination table in `schema.table` format |
+| `partition_key` | No | Column to partition by during snapshot (improves parallelism) |
+| `exclude_columns` | No | Array of column names to skip replication |
+
+<Callout type="warning">
+Excluded columns must be nullable or have default values on the destination, otherwise inserts will fail.
+</Callout>
+
+### Send the Create Mirror Request
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "prod_to_staging",
+    "source_peer": "source_db",
+    "destination_peer": "dest_db",
+    "do_initial_snapshot": true,
+    "max_batch_size": 1000,
+    "idle_timeout_seconds": 60,
+    "snapshot_num_rows_per_partition": 250000,
+    "snapshot_max_parallel_workers": 8,
+    "snapshot_num_tables_in_parallel": 4,
+    "replicate_indexes": true,
+    "replicate_foreign_keys": true,
+    "resync_strategy": "truncate",
+    "table_mappings": [
+      {
+        "source_table": "public.users",
+        "destination_table": "public.users",
+        "partition_key": "id"
+      },
+      {
+        "source_table": "public.orders",
+        "destination_table": "public.orders",
+        "partition_key": "user_id"
+      }
+    ]
+  }'
+```
+
+### Response
+
+```json
+{
+  "message": "Mirror 'prod_to_staging' created successfully"
+}
+```
+
+### Check Mirror Status
+
+```bash
+curl -X GET http://localhost:8112/v1/mirrors/prod_to_staging \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "name": "prod_to_staging",
+  "source_peer": "source_db",
+  "destination_peer": "dest_db",
+  "status": "RUNNING",
+  "current_phase": "CDC",
+  "tables": [
+    {
+      "source_table": "public.users",
+      "destination_table": "public.users",
+      "partition_key": "id",
+      "exclude_columns": []
+    }
+  ],
+  "config": {
+    "do_initial_snapshot": true,
+    "max_batch_size": 1000,
+    "idle_timeout_seconds": 60
+  }
+}
+```
+
+</Steps>
+
+## What Happens Internally
+
+When you create a mirror with `do_initial_snapshot: true`, BunnyDB executes these phases:
+
+<Steps>
+
+### Setup Phase
+
+- Creates a replication slot on the source database
+- Captures a snapshot LSN (Log Sequence Number)
+- Validates table mappings and schemas
+- Status: `SETUP`
+
+### Snapshot Phase
+
+- Copies existing data from source to destination using `COPY`
+- Partitions large tables for parallel processing
+- Creates indexes and foreign keys on destination
+- Status: `SNAPSHOT`
+
+<Callout type="info">
+During snapshot, CDC changes are buffered in the replication slot. Once snapshot completes, BunnyDB replays these changes to ensure consistency.
+</Callout>
+
+### CDC Phase
+
+- Starts consuming from the replication slot
+- Applies INSERT, UPDATE, DELETE changes in order
+- Batches changes based on `max_batch_size` and `idle_timeout_seconds`
+- Status: `RUNNING`, Phase: `CDC`
+
+</Steps>
+
+## Monitoring Replication
+
+View detailed metrics:
+
+```bash
+curl -X GET http://localhost:8112/v1/mirrors/prod_to_staging/metrics \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "mirror_name": "prod_to_staging",
+  "status": "RUNNING",
+  "current_phase": "CDC",
+  "lag_bytes": 2048,
+  "lag_seconds": 1.2,
+  "total_rows_synced": 1500000,
+  "last_sync_time": "2026-01-24T10:30:00Z"
+}
+```
+
+## Common Issues
+
+### Mirror Stuck in SETUP
+
+**Cause:** Source database not configured for logical replication or insufficient permissions.
+
+**Solution:** Verify `wal_level=logical` and user has `REPLICATION` privilege.
+
+### Snapshot Taking Too Long
+
+**Cause:** Large tables with suboptimal parallelism settings.
+
+**Solution:** Increase `snapshot_max_parallel_workers` and ensure `partition_key` is specified for large tables.
+
+### CDC Lag Growing
+
+**Cause:** Destination cannot keep up with source write rate.
+
+**Solution:**
+- Increase `max_batch_size` for higher throughput
+- Check destination database performance
+- Consider scaling destination resources
+
+## Next Steps
+
+- [Pause & Resume](/guides/pause-resume) - Learn how to pause and resume mirrors
+- [Table-Level Resync](/guides/table-level-resync) - Resync individual tables
+- [Schema Sync](/guides/schema-sync) - Handle schema changes

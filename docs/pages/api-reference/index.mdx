@@ -1,0 +1,180 @@
+import { Callout } from 'nextra/components'
+
+# API Reference Overview
+
+BunnyDB provides a RESTful HTTP API for managing PostgreSQL-to-PostgreSQL CDC replication. This API is the primary interface for creating and controlling replication mirrors, managing database peers, and monitoring replication status.
+
+## Base URL
+
+The API runs on port 8112 by default:
+
+```
+http://localhost:8112
+```
+
+All API endpoints are versioned under the `/v1` prefix.
+
+## Authentication
+
+Most endpoints require authentication using a Bearer token. Obtain a token by logging in via the `/v1/auth/login` endpoint.
+
+Include the token in the `Authorization` header:
+
+```bash
+Authorization: Bearer <your-token>
+```
+
+<Callout type="info">
+See the [Authentication](/api-reference/authentication) page for details on logging in and managing your credentials.
+</Callout>
+
+## Permission Levels
+
+BunnyDB has three permission levels for API endpoints:
+
+| Level | Description | Header Required |
+|-------|-------------|-----------------|
+| **open** | No authentication required | None |
+| **authed** | Any authenticated user (viewer or admin) | Bearer token |
+| **adminOnly** | Admin role required | Bearer token (admin user) |
+
+Administrative operations like creating mirrors, managing users, and modifying peers require admin privileges.
+
+## Response Format
+
+All API responses return JSON with the following characteristics:
+
+### Success Responses
+
+Successful responses return the requested data with HTTP status codes in the 2xx range:
+
+```json
+{
+  "id": 1,
+  "username": "admin",
+  "role": "admin"
+}
+```
+
+### Error Responses
+
+Errors return a JSON object with an `error` field and an appropriate HTTP status code:
+
+```json
+{
+  "error": "Invalid credentials"
+}
+```
+
+Common HTTP status codes:
+
+| Code | Meaning | Description |
+|------|---------|-------------|
+| 200 | OK | Request succeeded |
+| 201 | Created | Resource created successfully |
+| 400 | Bad Request | Invalid request parameters |
+| 401 | Unauthorized | Missing or invalid authentication token |
+| 403 | Forbidden | Insufficient permissions |
+| 404 | Not Found | Resource does not exist |
+| 409 | Conflict | Operation conflicts with current state |
+| 500 | Internal Server Error | Server-side error |
+
+## Rate Limiting
+
+BunnyDB does not implement rate limiting as it is designed as an internal tool for managing database replication within trusted networks.
+
+<Callout type="warning">
+Since there is no rate limiting, ensure BunnyDB is deployed in a secure network environment and not exposed to the public internet.
+</Callout>
+
+## API Endpoints
+
+The BunnyDB API is organized into the following categories:
+
+- **[Authentication](/api-reference/authentication)** - Login, token management, password changes
+- **[Users](/api-reference/users)** - User management (admin only)
+- **[Peers](/api-reference/peers)** - Database peer configuration and testing
+- **[Mirrors](/api-reference/mirrors)** - Mirror creation, status, and deletion
+- **[Mirror Control](/api-reference/mirror-control)** - Pause, resume, resync, retry operations
+- **[Logs](/api-reference/logs)** - Query mirror logs with filtering
+- **[Health](/api-reference/health)** - Health check endpoint for monitoring
+
+## Common Patterns
+
+### Creating Resources
+
+Resource creation endpoints use POST requests with JSON payloads:
+
+```bash
+curl -X POST http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "source-db",
+    "host": "postgres.example.com",
+    "port": 5432,
+    "user": "replication_user",
+    "password": "secret",
+    "database": "production",
+    "ssl_mode": "require"
+  }'
+```
+
+### Retrieving Resources
+
+Use GET requests to retrieve resources. List endpoints return arrays:
+
+```bash
+curl http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer <token>"
+```
+
+Single resource endpoints return the object directly:
+
+```bash
+curl http://localhost:8112/v1/peers/source-db \
+  -H "Authorization: Bearer <token>"
+```
+
+### Updating Resources
+
+Update endpoints use PUT requests:
+
+```bash
+curl -X PUT http://localhost:8112/v1/peers/source-db \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "host": "postgres-new.example.com"
+  }'
+```
+
+### Deleting Resources
+
+Delete endpoints use DELETE requests:
+
+```bash
+curl -X DELETE http://localhost:8112/v1/peers/source-db \
+  -H "Authorization: Bearer <token>"
+```
+
+### Control Operations
+
+Mirror control operations use POST requests to action endpoints:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/pause \
+  -H "Authorization: Bearer <token>"
+```
+
+## Getting Started
+
+1. Start by [authenticating](/api-reference/authentication) to obtain a Bearer token
+2. Create [database peers](/api-reference/peers) for your source and destination databases
+3. Create a [replication mirror](/api-reference/mirrors) to begin CDC
+4. Use [mirror control](/api-reference/mirror-control) endpoints to manage the replication
+5. Monitor progress with [logs](/api-reference/logs) and status endpoints
+
+<Callout type="info">
+For a guided walkthrough, see the [Quickstart](/quickstart) guide.
+</Callout>

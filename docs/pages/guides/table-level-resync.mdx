@@ -1,0 +1,365 @@
+import { Callout, Steps } from 'nextra/components'
+
+# Table-Level Resync
+
+Table-level resync allows you to refresh data for individual tables without affecting the entire mirror. This is useful for resolving data drift, corruption, or schema changes on specific tables.
+
+## Use Cases
+
+Resync individual tables when:
+
+- **Data corruption detected**: Destination table has corrupted or inconsistent data
+- **Schema drift**: Manual schema changes on destination caused sync failures
+- **Missed changes**: Replication slot gap or CDC failure caused missing data
+- **Column exclusion changes**: You modified `exclude_columns` and need fresh data
+- **Testing**: Validate resync behavior on a single table before full mirror resync
+
+## Table-Level Resync
+
+Resync a single table within a mirror:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resync/public.users \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Response
+
+```json
+{
+  "message": "Resync started for table 'public.users' in mirror 'prod_to_staging'"
+}
+```
+
+<Callout type="warning">
+CDC replication **pauses for the entire mirror** during table resync. Other tables in the mirror accumulate changes in the replication slot.
+</Callout>
+
+## Resync Strategies
+
+BunnyDB supports two resync strategies, configured at mirror creation with the `resync_strategy` parameter.
+
+### Truncate Strategy (Default)
+
+Fast but causes downtime for reads on the destination table.
+
+<Steps>
+
+### Pause CDC
+
+The CDC worker gracefully shuts down, preserving the replication slot position.
+
+### Drop Foreign Keys
+
+All foreign keys referencing the table are temporarily dropped:
+
+```sql
+-- Example: Foreign keys dropped
+ALTER TABLE orders DROP CONSTRAINT fk_orders_user_id;
+```
+
+### Truncate Table
+
+The destination table is truncated:
+
+```sql
+TRUNCATE TABLE public.users;
+```
+
+<Callout type="error">
+During this step, the table is **empty**. Any queries to the destination will return no data.
+</Callout>
+
+### Copy from Source
+
+Data is copied using PostgreSQL's `COPY` protocol:
+
+```sql
+COPY public.users FROM PROGRAM '...' WITH (FORMAT binary);
+```
+
+Large tables are partitioned for parallel workers (based on `snapshot_max_parallel_workers`).
+
+### Rebuild Indexes
+
+If `replicate_indexes: true`, indexes are recreated:
+
+```sql
+CREATE INDEX idx_users_email ON public.users(email);
+CREATE INDEX idx_users_created_at ON public.users(created_at);
+```
+
+### Recreate Foreign Keys
+
+If `replicate_foreign_keys: true`, constraints are restored:
+
+```sql
+ALTER TABLE orders ADD CONSTRAINT fk_orders_user_id
+  FOREIGN KEY (user_id) REFERENCES public.users(id);
+```
+
+### Restart CDC
+
+The mirror resumes CDC from the preserved LSN position, replaying any changes that occurred during resync.
+
+</Steps>
+
+**Pros:**
+- Fast execution
+- Less disk space required
+
+**Cons:**
+- Destination table is unavailable during resync
+- Read queries return empty results or fail
+
+### Swap Strategy
+
+Zero-downtime but requires additional disk space.
+
+<Steps>
+
+### Create Shadow Table
+
+A temporary table `\{table\}_resync` is created with the same schema:
+
+```sql
+CREATE TABLE public.users_resync (LIKE public.users INCLUDING ALL);
+```
+
+### Copy Data to Shadow Table
+
+Data is copied into the shadow table:
+
+```sql
+COPY public.users_resync FROM PROGRAM '...' WITH (FORMAT binary);
+```
+
+<Callout type="info">
+During this step, the original table remains available for reads. CDC is paused, so writes from source are buffered in the replication slot.
+</Callout>
+
+### Build Indexes
+
+Indexes are created on the shadow table:
+
+```sql
+CREATE INDEX idx_users_email ON public.users_resync(email);
+```
+
+### Atomic Swap
+
+The old and new tables are swapped atomically using renames:
+
+```sql
+BEGIN;
+ALTER TABLE public.users RENAME TO users_old;
+ALTER TABLE public.users_resync RENAME TO users;
+DROP TABLE public.users_old;
+COMMIT;
+```
+
+<Callout type="info">
+This operation is **atomic**. Queries are briefly blocked during the rename but never return empty results.
+</Callout>
+
+### Recreate Foreign Keys
+
+Foreign keys are recreated to point to the new table:
+
+```sql
+ALTER TABLE orders ADD CONSTRAINT fk_orders_user_id
+  FOREIGN KEY (user_id) REFERENCES public.users(id);
+```
+
+### Restart CDC
+
+CDC resumes, replaying buffered changes.
+
+</Steps>
+
+**Pros:**
+- Zero downtime for reads
+- Queries never see empty table
+
+**Cons:**
+- Requires 2x disk space temporarily
+- Slower execution due to atomic swap coordination
+
+## Full Mirror Resync
+
+To resync **all tables** in a mirror:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resync \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Response
+
+```json
+{
+  "message": "Full resync started for mirror 'prod_to_staging'"
+}
+```
+
+<Callout type="warning">
+Full mirror resync resyncs every table in the table mappings. Depending on data size, this can take hours.
+</Callout>
+
+## Monitoring Resync Progress
+
+Check mirror status during resync:
+
+```bash
+curl -X GET http://localhost:8112/v1/mirrors/prod_to_staging \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**Response during resync:**
+
+```json
+{
+  "name": "prod_to_staging",
+  "status": "RESYNCING",
+  "current_phase": "SNAPSHOT",
+  "source_peer": "source_db",
+  "destination_peer": "dest_db",
+  "tables": [
+    {
+      "source_table": "public.users",
+      "destination_table": "public.users",
+      "resync_status": "in_progress"
+    }
+  ]
+}
+```
+
+**Response after completion:**
+
+```json
+{
+  "name": "prod_to_staging",
+  "status": "RUNNING",
+  "current_phase": "CDC"
+}
+```
+
+## Impact on Other Mirrors
+
+Table-level resync **only affects the mirror being resynced**. Other mirrors using the same source or destination continue running normally.
+
+**Example:**
+
+- Mirror `prod_to_staging` resyncs `public.users`
+- Mirror `prod_to_analytics` continues CDC for all its tables
+- Both mirrors share the source `prod_db`
+
+Each mirror maintains its own replication slot, so operations are isolated.
+
+## Best Practices
+
+### Resync During Low-Traffic Periods
+
+Even with swap strategy, resync consumes significant I/O resources. Schedule resyncs during off-peak hours:
+
+```bash
+# Example: Run resync at 2 AM
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resync/public.users \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Monitor Replication Slot Lag
+
+During resync, CDC is paused and WAL accumulates:
+
+```sql
+-- Run on source database
+SELECT slot_name,
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS lag
+FROM pg_replication_slots
+WHERE slot_name = 'bunny_prod_to_staging';
+```
+
+If lag grows too large, source disk may fill up.
+
+### Use Swap Strategy for Production
+
+For production workloads where read availability is critical:
+
+```json
+{
+  "name": "prod_to_staging",
+  "resync_strategy": "swap",
+  ...
+}
+```
+
+### Verify Data After Resync
+
+After resync completes, validate row counts:
+
+```sql
+-- Source
+SELECT COUNT(*) FROM public.users;
+
+-- Destination
+SELECT COUNT(*) FROM public.users;
+```
+
+Or use a checksum for critical tables:
+
+```sql
+-- Source
+SELECT md5(string_agg(md5(t::text), '' ORDER BY id))
+FROM public.users t;
+
+-- Compare with destination
+```
+
+## Troubleshooting
+
+### Resync Fails with "Table Not Found"
+
+**Cause:** Table doesn't exist on source or destination.
+
+**Solution:** Verify table exists in both databases:
+
+```bash
+# List source tables
+curl -X GET http://localhost:8112/v1/peers/source_db/tables \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# List destination tables
+curl -X GET http://localhost:8112/v1/peers/dest_db/tables \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Resync Stuck at 0% Progress
+
+**Cause:** Insufficient permissions on destination or source.
+
+**Solution:** Check BunnyDB logs for detailed errors:
+
+```bash
+docker logs bunnydb --tail 50 | grep ERROR
+```
+
+Ensure the destination user has `CREATE`, `INSERT`, `TRUNCATE` privileges.
+
+### Swap Strategy Fails with Constraint Violation
+
+**Cause:** Foreign key references prevent table rename.
+
+**Solution:** BunnyDB automatically handles FK drops/recreations, but manual constraints may interfere. Check for triggers or custom constraints:
+
+```sql
+SELECT conname, contype
+FROM pg_constraint
+WHERE conrelid = 'public.users'::regclass;
+```
+
+## Next Steps
+
+- [Schema Sync](/guides/schema-sync) - Sync schema changes from source
+- [Zero-Downtime Swap Resync](/guides/zero-downtime-swap-resync) - Deep dive into swap strategy
+- [Pause & Resume](/guides/pause-resume) - Control mirror execution

@@ -1,0 +1,219 @@
+import { Callout, Tabs } from 'nextra/components'
+
+# Authentication
+
+BunnyDB uses JWT (JSON Web Token) based authentication. Users must log in to obtain a token, which is then used to authenticate subsequent API requests.
+
+## Login
+
+Authenticate with username and password to receive a JWT token.
+
+### Endpoint
+
+```
+POST /v1/auth/login
+```
+
+**Permission**: `open` (no authentication required)
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `username` | string | Yes | Username |
+| `password` | string | Yes | Password |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `token` | string | JWT token for authenticating future requests |
+| `username` | string | Authenticated username |
+| `role` | string | User role (`admin` or `viewer`) |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "password": "admin"
+  }'
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "username": "admin",
+  "role": "admin"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="warning">
+The default admin credentials are `admin:admin`. Change these immediately in production environments by setting the `BUNNY_ADMIN_USER` and `BUNNY_ADMIN_PASSWORD` environment variables.
+</Callout>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 400 | Bad Request | Missing username or password |
+| 401 | Invalid credentials | Wrong username or password |
+
+## Get Current User
+
+Retrieve information about the currently authenticated user.
+
+### Endpoint
+
+```
+GET /v1/auth/me
+```
+
+**Permission**: `authed` (any authenticated user)
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `username` | string | Current user's username |
+| `role` | string | Current user's role (`admin` or `viewer`) |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/v1/auth/me \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "username": "admin",
+  "role": "admin"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 401 | Unauthorized | Missing or invalid token |
+
+## Change Password
+
+Change the password for the currently authenticated user.
+
+### Endpoint
+
+```
+POST /v1/auth/change-password
+```
+
+**Permission**: `authed` (any authenticated user)
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `current_password` | string | Yes | Current password for verification |
+| `new_password` | string | Yes | New password to set |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Success confirmation message |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/auth/change-password \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "current_password": "admin",
+    "new_password": "new-secure-password"
+  }'
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "message": "Password changed successfully"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+After changing your password, your current token remains valid. However, you'll need to use the new password for future logins.
+</Callout>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 400 | Bad Request | Missing current or new password |
+| 401 | Unauthorized | Missing or invalid token, or incorrect current password |
+
+## Using Authentication Tokens
+
+After obtaining a token from the login endpoint, include it in the `Authorization` header for all authenticated requests:
+
+```bash
+Authorization: Bearer <your-token>
+```
+
+### Token Lifecycle
+
+- Tokens are issued upon successful login
+- Tokens do not expire (stateless JWT)
+- Tokens remain valid until the JWT secret is rotated
+- Users can have multiple active tokens simultaneously
+
+### Security Best Practices
+
+<Callout type="warning">
+**Production Security Recommendations:**
+
+1. Set a strong `BUNNY_JWT_SECRET` environment variable (not the auto-generated default)
+2. Change default admin credentials immediately
+3. Use HTTPS/TLS for all API communication to protect tokens in transit
+4. Store tokens securely (never in source code or logs)
+5. Deploy BunnyDB in a private network, not exposed to the public internet
+</Callout>
+
+## Role-Based Access Control
+
+BunnyDB supports two user roles:
+
+### Admin Role
+
+- Full access to all API endpoints
+- Can create, update, and delete resources
+- Can manage users
+- Can perform all mirror control operations
+
+### Viewer Role
+
+- Read-only access to most resources
+- Cannot create, update, or delete resources
+- Cannot manage users
+- Useful for monitoring and reporting purposes
+
+<Callout type="info">
+See the [Users](/api-reference/users) page for managing user accounts and roles.
+</Callout>

@@ -1,0 +1,268 @@
+import { Callout, Tabs } from 'nextra/components'
+
+# Users
+
+Manage BunnyDB user accounts and permissions. All user management endpoints require admin privileges.
+
+<Callout type="warning">
+All endpoints on this page require the `admin` role.
+</Callout>
+
+## List Users
+
+Retrieve a list of all user accounts.
+
+### Endpoint
+
+```
+GET /v1/users
+```
+
+**Permission**: `adminOnly`
+
+### Response
+
+Returns an array of user objects:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | number | Unique user identifier |
+| `username` | string | Username |
+| `role` | string | User role (`admin` or `viewer`) |
+| `created_at` | string | ISO 8601 timestamp of user creation |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/v1/users \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+[
+  {
+    "id": 1,
+    "username": "admin",
+    "role": "admin",
+    "created_at": "2024-01-15T10:30:00Z"
+  },
+  {
+    "id": 2,
+    "username": "viewer",
+    "role": "viewer",
+    "created_at": "2024-01-16T14:22:00Z"
+  }
+]
+```
+</Tabs.Tab>
+</Tabs>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 401 | Unauthorized | Missing or invalid token |
+| 403 | Forbidden | User does not have admin role |
+
+## Create User
+
+Create a new user account.
+
+### Endpoint
+
+```
+POST /v1/users
+```
+
+**Permission**: `adminOnly`
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `username` | string | Yes | Username (must be unique) |
+| `password` | string | Yes | Initial password |
+| `role` | string | Yes | User role (`admin` or `viewer`) |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | number | Unique identifier for the new user |
+| `username` | string | Username |
+| `role` | string | User role |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/users \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "readonly-user",
+    "password": "secure-password",
+    "role": "viewer"
+  }'
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "id": 3,
+  "username": "readonly-user",
+  "role": "viewer"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+**Password Security**: Passwords are hashed using bcrypt before storage. BunnyDB never stores plain-text passwords.
+</Callout>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 400 | Bad Request | Missing required fields or invalid role |
+| 401 | Unauthorized | Missing or invalid token |
+| 403 | Forbidden | User does not have admin role |
+| 409 | Conflict | Username already exists |
+
+## Delete User
+
+Delete a user account.
+
+### Endpoint
+
+```
+DELETE /v1/users/{username}
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `username` | string | Username of the user to delete |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `deleted` | string | Username of the deleted user |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X DELETE http://localhost:8112/v1/users/readonly-user \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "deleted": "readonly-user"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="warning">
+**Cannot Delete Self**: You cannot delete your own user account. This prevents accidental lockouts. If you need to remove the currently authenticated admin user, log in as a different admin user first.
+</Callout>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 400 | Bad Request | Attempting to delete your own account |
+| 401 | Unauthorized | Missing or invalid token |
+| 403 | Forbidden | User does not have admin role |
+| 404 | Not Found | User does not exist |
+
+## User Roles
+
+BunnyDB supports two user roles:
+
+### Admin Role
+
+Admin users have full access to all API functionality:
+
+- Create, read, update, and delete all resources
+- Manage user accounts
+- Control mirror operations (pause, resume, resync, retry)
+- View logs and status information
+
+### Viewer Role
+
+Viewer users have read-only access:
+
+- View peers, mirrors, and their status
+- View logs
+- View table mappings and available tables
+- **Cannot** create, update, or delete resources
+- **Cannot** control mirror operations
+- **Cannot** manage users
+
+## Common Use Cases
+
+### Creating a Monitoring User
+
+Create a viewer account for monitoring tools or team members who only need read access:
+
+```bash
+curl -X POST http://localhost:8112/v1/users \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "monitor",
+    "password": "monitor-password",
+    "role": "viewer"
+  }'
+```
+
+### Creating an Operations User
+
+Create an admin account for team members who need to manage replication:
+
+```bash
+curl -X POST http://localhost:8112/v1/users \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "ops-team",
+    "password": "ops-password",
+    "role": "admin"
+  }'
+```
+
+### Auditing Users
+
+List all users to see who has access to the system:
+
+```bash
+curl http://localhost:8112/v1/users \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+### Removing Inactive Users
+
+Remove users who no longer need access:
+
+```bash
+curl -X DELETE http://localhost:8112/v1/users/former-employee \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+<Callout type="info">
+Users can change their own passwords using the [change password](/api-reference/authentication#change-password) endpoint without admin privileges.
+</Callout>

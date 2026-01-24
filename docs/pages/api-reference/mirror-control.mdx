@@ -1,0 +1,659 @@
+import { Callout, Tabs, Steps } from 'nextra/components'
+
+# Mirror Control
+
+Control the lifecycle and behavior of active replication mirrors. These endpoints allow you to pause, resume, resync, retry, and manage table mappings for running mirrors.
+
+<Callout type="warning">
+All endpoints on this page require the `admin` role.
+</Callout>
+
+## Pause Mirror
+
+Temporarily stop a running mirror. CDC replication is paused, but the replication slot remains active.
+
+### Endpoint
+
+```
+POST /v1/mirrors/{name}/pause
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Confirmation message |
+| `status` | string | New mirror status (`paused`) |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod-to-analytics/pause \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "message": "Mirror paused successfully",
+  "status": "paused"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+**When to pause**: Use pause before updating table mappings, performing destination database maintenance, or temporarily stopping replication without losing the replication slot position.
+</Callout>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 401 | Unauthorized | Missing or invalid token |
+| 403 | Forbidden | User does not have admin role |
+| 404 | Not Found | Mirror does not exist |
+| 409 | Conflict | Mirror is already paused or operation in progress |
+
+## Resume Mirror
+
+Resume a paused mirror. CDC replication continues from the last replicated LSN.
+
+### Endpoint
+
+```
+POST /v1/mirrors/{name}/resume
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Confirmation message |
+| `status` | string | New mirror status (`running`) |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod-to-analytics/resume \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "message": "Mirror resumed successfully",
+  "status": "running"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+Resume picks up where the mirror left off. No data is lost during the pause period - all changes are replicated upon resume.
+</Callout>
+
+## Resync Mirror (Full)
+
+Perform a full resync of all tables in the mirror. This drops and recreates the replication slot, then re-snapshots all tables.
+
+### Endpoint
+
+```
+POST /v1/mirrors/{name}/resync
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Confirmation message |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod-to-analytics/resync \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "message": "Full resync initiated"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="warning">
+**Data Loss Risk**: Full resync truncates destination tables and re-copies all data from the source. Use this when destination data has drifted significantly from the source or when schema changes require a fresh start.
+</Callout>
+
+### Use Cases
+
+- Destination data has diverged from source
+- Major schema changes on source tables
+- Replication slot corruption or loss
+- Testing replication from scratch
+
+## Resync Table
+
+Resync a single table without affecting other tables in the mirror.
+
+### Endpoint
+
+```
+POST /v1/mirrors/{name}/resync/{table}
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+| `table` | string | Fully qualified table name in format `schema.table` |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Confirmation message |
+| `table` | string | Table being resynced |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod-to-analytics/resync/public.users \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "message": "Table resync initiated",
+  "table": "public.users"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+**Selective Resync**: Table resync is less disruptive than full resync. Only the specified table is truncated and re-snapshotted. Other tables continue normal CDC replication.
+</Callout>
+
+### Use Cases
+
+- Single table has data inconsistencies
+- Schema changed on one table
+- Testing table-specific replication issues
+
+## Retry Mirror
+
+Immediately retry a mirror in error state, bypassing the exponential backoff timer.
+
+### Endpoint
+
+```
+POST /v1/mirrors/{name}/retry
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Confirmation message |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod-to-analytics/retry \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "message": "Retry initiated"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+**RetryNow Signal**: This endpoint sends a `RetryNow` signal to the Temporal workflow, which drops the replication slot if needed and restarts the mirror immediately without waiting for the exponential backoff delay.
+</Callout>
+
+### Use Cases
+
+- Mirror stuck in error state after fixing the underlying issue
+- Replication slot is active from a previous connection
+- Immediate retry needed instead of waiting for automatic retry
+- "Workflow execution already completed" error
+
+<Callout type="warning">
+**Replication Slot Handling**: The retry operation drops and recreates the replication slot to ensure a clean restart. This means any WAL data not yet replicated is lost. Use this when you've fixed the root cause and want a fresh start.
+</Callout>
+
+## Sync Schema
+
+Synchronize schema changes from source to destination without resyncing data.
+
+### Endpoint
+
+```
+POST /v1/mirrors/{name}/sync-schema
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Confirmation message |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod-to-analytics/sync-schema \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "message": "Schema sync initiated"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+**Schema Changes**: This endpoint propagates DDL changes (ALTER TABLE, ADD COLUMN, etc.) from source to destination. It's useful when you've made schema changes on the source and need to update the destination without a full data resync.
+</Callout>
+
+### Use Cases
+
+- Column added to source table
+- Column type changed
+- Index or constraint changes
+- Table structure modifications
+
+<Callout type="warning">
+**SyncSchema Signal**: This operation drops the replication slot before restarting to ensure schema changes are properly detected and applied.
+</Callout>
+
+## Update Table Mappings
+
+Modify which tables are replicated by the mirror. Add new tables or remove existing ones.
+
+### Endpoint
+
+```
+PUT /v1/mirrors/{name}/tables
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `table_mappings` | array | Yes | Complete array of table mapping objects |
+
+Each table mapping object has the same structure as in [mirror creation](/api-reference/mirrors#create-mirror):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `source_schema` | string | Yes | Source schema name |
+| `source_table` | string | Yes | Source table name |
+| `destination_schema` | string | Yes | Destination schema name |
+| `destination_table` | string | Yes | Destination table name |
+| `exclude_columns` | array | No | Column names to exclude |
+
+### Response
+
+Returns the updated table mappings.
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X PUT http://localhost:8112/v1/mirrors/prod-to-analytics/tables \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "table_mappings": [
+      {
+        "source_schema": "public",
+        "source_table": "users",
+        "destination_schema": "public",
+        "destination_table": "users"
+      },
+      {
+        "source_schema": "public",
+        "source_table": "orders",
+        "destination_schema": "public",
+        "destination_table": "orders"
+      },
+      {
+        "source_schema": "public",
+        "source_table": "products",
+        "destination_schema": "public",
+        "destination_table": "products"
+      }
+    ]
+  }'
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "message": "Table mappings updated successfully",
+  "table_mappings": [
+    {
+      "source_schema": "public",
+      "source_table": "users",
+      "destination_schema": "public",
+      "destination_table": "users"
+    },
+    {
+      "source_schema": "public",
+      "source_table": "orders",
+      "destination_schema": "public",
+      "destination_table": "orders"
+    },
+    {
+      "source_schema": "public",
+      "source_table": "products",
+      "destination_schema": "public",
+      "destination_table": "products"
+    }
+  ]
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="error">
+**Mirror Must Be Paused**: You cannot update table mappings while a mirror is running. Pause the mirror first, update the mappings, then resume.
+</Callout>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 400 | Bad Request | Invalid table mapping format |
+| 401 | Unauthorized | Missing or invalid token |
+| 403 | Forbidden | User does not have admin role |
+| 404 | Not Found | Mirror does not exist |
+| 409 | Conflict | Mirror must be paused to update tables |
+
+## Get Table Mappings
+
+Retrieve the current table mappings for a mirror.
+
+### Endpoint
+
+```
+GET /v1/mirrors/{name}/tables
+```
+
+**Permission**: `authed` (any authenticated user)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Response
+
+Returns an array of table mapping objects.
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/v1/mirrors/prod-to-analytics/tables \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+[
+  {
+    "source_schema": "public",
+    "source_table": "users",
+    "destination_schema": "public",
+    "destination_table": "users",
+    "exclude_columns": ["password_hash"]
+  },
+  {
+    "source_schema": "public",
+    "source_table": "orders",
+    "destination_schema": "public",
+    "destination_table": "orders"
+  }
+]
+```
+</Tabs.Tab>
+</Tabs>
+
+## Get Available Tables
+
+List tables from the source peer that are not yet included in the mirror.
+
+### Endpoint
+
+```
+GET /v1/mirrors/{name}/available-tables
+```
+
+**Permission**: `authed` (any authenticated user)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Response
+
+Returns an array of available table objects:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema` | string | Schema name |
+| `table_name` | string | Table name |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/v1/mirrors/prod-to-analytics/available-tables \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+[
+  {
+    "schema": "public",
+    "table_name": "products"
+  },
+  {
+    "schema": "public",
+    "table_name": "categories"
+  },
+  {
+    "schema": "analytics",
+    "table_name": "events"
+  }
+]
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+Use this endpoint to discover which tables you can add to an existing mirror via the [Update Table Mappings](#update-table-mappings) endpoint.
+</Callout>
+
+## Common Workflows
+
+### Adding a New Table to a Mirror
+
+<Steps>
+
+### Pause the mirror
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/pause \
+  -H "Authorization: Bearer <token>"
+```
+
+### Get available tables
+```bash
+curl http://localhost:8112/v1/mirrors/my-mirror/available-tables \
+  -H "Authorization: Bearer <token>"
+```
+
+### Update table mappings with the new table
+```bash
+curl -X PUT http://localhost:8112/v1/mirrors/my-mirror/tables \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "table_mappings": [
+      ... existing tables ...,
+      {
+        "source_schema": "public",
+        "source_table": "new_table",
+        "destination_schema": "public",
+        "destination_table": "new_table"
+      }
+    ]
+  }'
+```
+
+### Resume the mirror
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/resume \
+  -H "Authorization: Bearer <token>"
+```
+
+</Steps>
+
+### Recovering from an Error
+
+<Steps>
+
+### Check the mirror status
+```bash
+curl http://localhost:8112/v1/mirrors/my-mirror \
+  -H "Authorization: Bearer <token>"
+```
+
+### Review error logs
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?level=ERROR" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Fix the underlying issue
+(e.g., network connectivity, permissions, schema conflicts)
+
+### Retry the mirror
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/retry \
+  -H "Authorization: Bearer <token>"
+```
+
+</Steps>
+
+### Handling Schema Changes
+
+<Steps>
+
+### Make schema changes on source database
+```sql
+ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT false;
+```
+
+### Sync schema to destination
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/sync-schema \
+  -H "Authorization: Bearer <token>"
+```
+
+### Monitor for successful completion
+```bash
+curl http://localhost:8112/v1/mirrors/my-mirror \
+  -H "Authorization: Bearer <token>"
+```
+
+</Steps>
+
+<Callout type="info">
+For troubleshooting specific error scenarios, see the [Troubleshooting](/troubleshooting) guide.
+</Callout>

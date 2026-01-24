@@ -1,0 +1,554 @@
+import { Callout, Steps } from 'nextra/components'
+
+# User Management & RBAC
+
+BunnyDB includes built-in user management with role-based access control (RBAC). This guide covers authentication, user administration, and permission management.
+
+## Overview
+
+BunnyDB supports two roles with distinct permissions:
+
+- **admin**: Full access to all operations (create, read, update, delete, control)
+- **readonly**: Read-only access to view peers, mirrors, and metrics
+
+All API endpoints require Bearer token authentication (except the login endpoint).
+
+## Default Admin User
+
+BunnyDB seeds a default admin user on first startup using environment variables:
+
+```yaml
+# docker-compose.yml or .env
+BUNNY_ADMIN_USER=admin
+BUNNY_ADMIN_PASSWORD=your_secure_password
+```
+
+<Callout type="warning">
+Change the default admin password immediately after deployment. Never use default credentials in production.
+</Callout>
+
+## Authentication
+
+### Login
+
+Obtain a JWT token by authenticating with username and password:
+
+```bash
+curl -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "password": "your_password"
+  }'
+```
+
+### Response
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "username": "admin",
+  "role": "admin"
+}
+```
+
+### Token Expiration
+
+JWT tokens are valid for **24 hours**. After expiration, you must login again to obtain a new token.
+
+<Callout type="info">
+Store tokens securely. Never commit tokens to version control or expose them in client-side code.
+</Callout>
+
+### Using the Token
+
+Include the token in the `Authorization` header for all subsequent requests:
+
+```bash
+curl -X GET http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+## User Management
+
+### Creating Users
+
+Admins can create new users with either `admin` or `readonly` roles:
+
+```bash
+curl -X POST http://localhost:8112/v1/users \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "ops_team",
+    "password": "secure_password_123",
+    "role": "admin"
+  }'
+```
+
+**Creating a readonly user:**
+
+```bash
+curl -X POST http://localhost:8112/v1/users \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "data_analyst",
+    "password": "analyst_pass_456",
+    "role": "readonly"
+  }'
+```
+
+### Response
+
+```json
+{
+  "message": "User 'ops_team' created successfully"
+}
+```
+
+<Callout type="error">
+Only users with the **admin** role can create other users. Readonly users will receive a 403 Forbidden error.
+</Callout>
+
+### Listing Users
+
+View all users in the system:
+
+```bash
+curl -X GET http://localhost:8112/v1/users \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+```
+
+### Response
+
+```json
+[
+  {
+    "username": "admin",
+    "role": "admin",
+    "created_at": "2026-01-15T10:00:00Z"
+  },
+  {
+    "username": "ops_team",
+    "role": "admin",
+    "created_at": "2026-01-20T14:30:00Z"
+  },
+  {
+    "username": "data_analyst",
+    "role": "readonly",
+    "created_at": "2026-01-22T09:15:00Z"
+  }
+]
+```
+
+<Callout type="info">
+Passwords are never returned in API responses. They are stored as bcrypt hashes in BunnyDB's metadata store.
+</Callout>
+
+### Deleting Users
+
+Admins can delete users (except themselves):
+
+```bash
+curl -X DELETE http://localhost:8112/v1/users/data_analyst \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+```
+
+### Response
+
+```json
+{
+  "message": "User 'data_analyst' deleted successfully"
+}
+```
+
+**Attempting to delete yourself:**
+
+```bash
+curl -X DELETE http://localhost:8112/v1/users/admin \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+```
+
+```json
+{
+  "error": "Cannot delete your own user account"
+}
+```
+
+<Callout type="warning">
+Deleting a user immediately invalidates all their active tokens. They will be logged out of all sessions.
+</Callout>
+
+## Changing Password
+
+Any user can change their own password:
+
+```bash
+curl -X POST http://localhost:8112/v1/auth/change-password \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "current_password": "old_password",
+    "new_password": "new_secure_password"
+  }'
+```
+
+### Response
+
+```json
+{
+  "message": "Password changed successfully"
+}
+```
+
+<Callout type="error">
+After changing password, your current token remains valid until expiration. For security, consider logging out and logging back in with the new password.
+</Callout>
+
+## Permission Matrix
+
+| Operation | Admin | Readonly |
+|-----------|:-----:|:--------:|
+| **Authentication** |
+| Login | ✅ | ✅ |
+| Change own password | ✅ | ✅ |
+| **User Management** |
+| List users | ✅ | ❌ |
+| Create users | ✅ | ❌ |
+| Delete users | ✅ | ❌ |
+| **Peers** |
+| List peers | ✅ | ✅ |
+| Get peer details | ✅ | ✅ |
+| Test peer connection | ✅ | ✅ |
+| List peer tables | ✅ | ✅ |
+| Create peer | ✅ | ❌ |
+| Update peer | ✅ | ❌ |
+| Delete peer | ✅ | ❌ |
+| **Mirrors** |
+| List mirrors | ✅ | ✅ |
+| Get mirror details | ✅ | ✅ |
+| Get mirror metrics | ✅ | ✅ |
+| Create mirror | ✅ | ❌ |
+| Update mirror config | ✅ | ❌ |
+| Update table mappings | ✅ | ❌ |
+| Delete mirror | ✅ | ❌ |
+| **Mirror Control** |
+| Pause mirror | ✅ | ❌ |
+| Resume mirror | ✅ | ❌ |
+| Resync mirror | ✅ | ❌ |
+| Resync table | ✅ | ❌ |
+| Sync schema | ✅ | ❌ |
+
+## Role-Based Workflows
+
+### Admin Workflow
+
+Admins have full control over BunnyDB:
+
+<Steps>
+
+### Login
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin_pass"}' \
+  | jq -r '.token')
+```
+
+### Create Peers
+
+```bash
+curl -X POST http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "source_db",
+    "host": "postgres-source",
+    "port": 5432,
+    "user": "postgres",
+    "password": "postgres",
+    "database": "production",
+    "ssl_mode": "disable"
+  }'
+```
+
+### Create Mirror
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @mirror_config.json
+```
+
+### Manage Users
+
+```bash
+# Create readonly analyst
+curl -X POST http://localhost:8112/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "analyst",
+    "password": "analyst_pass",
+    "role": "readonly"
+  }'
+```
+
+</Steps>
+
+### Readonly Workflow
+
+Readonly users can monitor but not modify:
+
+<Steps>
+
+### Login
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "analyst", "password": "analyst_pass"}' \
+  | jq -r '.token')
+```
+
+### View Mirrors
+
+```bash
+curl -X GET http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Monitor Metrics
+
+```bash
+curl -X GET http://localhost:8112/v1/mirrors/prod_to_staging/metrics \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### View Peers
+
+```bash
+curl -X GET http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Attempt Mutation (Fails)
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/pause \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "error": "Insufficient permissions. Admin role required."
+}
+```
+
+</Steps>
+
+## Best Practices
+
+### Use Readonly Accounts for Monitoring
+
+Create readonly accounts for dashboards, monitoring tools, and analysts:
+
+```bash
+curl -X POST http://localhost:8112/v1/users \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "grafana",
+    "password": "grafana_secret",
+    "role": "readonly"
+  }'
+```
+
+This prevents accidental mutations via monitoring tools.
+
+### Rotate Passwords Regularly
+
+Implement a password rotation policy:
+
+```bash
+# Every 90 days, change admin password
+curl -X POST http://localhost:8112/v1/auth/change-password \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "current_password": "old_pass",
+    "new_password": "new_pass_$(date +%s)"
+  }'
+```
+
+### Use Environment Variables for Automation
+
+Store tokens in environment variables for scripts:
+
+```bash
+export BUNNY_TOKEN=$(curl -s -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "ops", "password": "'$BUNNY_PASSWORD'"}' \
+  | jq -r '.token')
+
+# Use in automation
+curl -X GET http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer $BUNNY_TOKEN"
+```
+
+### Principle of Least Privilege
+
+Grant minimum required permissions:
+
+- **Operations teams**: `admin` (need to pause/resume/resync)
+- **Data analysts**: `readonly` (only need to view status)
+- **Monitoring systems**: `readonly` (only need metrics)
+- **CI/CD pipelines**: `admin` (need to create/delete mirrors for testing)
+
+### Audit User Access
+
+Periodically review user list and remove unused accounts:
+
+```bash
+# List all users
+curl -X GET http://localhost:8112/v1/users \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Remove stale accounts
+curl -X DELETE http://localhost:8112/v1/users/old_employee \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+## Security Considerations
+
+### Token Storage
+
+**✅ Good practices:**
+- Store tokens in environment variables
+- Use secret management systems (AWS Secrets Manager, HashiCorp Vault)
+- Clear tokens from memory when no longer needed
+
+**❌ Bad practices:**
+- Hardcoding tokens in application code
+- Committing tokens to git repositories
+- Storing tokens in plaintext files
+- Exposing tokens in client-side JavaScript
+
+### Password Requirements
+
+Enforce strong passwords:
+
+- Minimum 12 characters
+- Mix of uppercase, lowercase, numbers, symbols
+- Avoid common passwords or dictionary words
+
+```bash
+# Example strong password
+curl -X POST http://localhost:8112/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "ops",
+    "password": "Tr0ng!P@ssw0rd#2026",
+    "role": "admin"
+  }'
+```
+
+### Network Security
+
+Run BunnyDB behind a firewall or VPN:
+
+```yaml
+# docker-compose.yml
+services:
+  bunny:
+    image: bunnydb/bunny
+    ports:
+      # Only bind to localhost
+      - "127.0.0.1:8112:8112"
+```
+
+Or use a reverse proxy with HTTPS:
+
+```nginx
+# nginx.conf
+server {
+  listen 443 ssl;
+  server_name bunnydb.example.com;
+
+  ssl_certificate /etc/ssl/certs/bunnydb.crt;
+  ssl_certificate_key /etc/ssl/private/bunnydb.key;
+
+  location / {
+    proxy_pass http://localhost:8112;
+    proxy_set_header Authorization $http_authorization;
+  }
+}
+```
+
+### Monitor Failed Login Attempts
+
+Check logs for suspicious activity:
+
+```bash
+docker logs bunnydb | grep "Failed login"
+```
+
+Implement rate limiting or IP blocking for repeated failures.
+
+## Troubleshooting
+
+### 401 Unauthorized
+
+**Cause:** Token missing, expired, or invalid.
+
+**Solution:**
+
+```bash
+# Login again to get fresh token
+curl -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "your_password"}'
+```
+
+### 403 Forbidden
+
+**Cause:** User lacks required role for operation.
+
+**Solution:** Use an admin account or request admin to perform the operation:
+
+```bash
+# Check your role
+curl -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "your_user", "password": "your_pass"}' \
+  | jq '.role'
+
+# Output: "readonly"
+```
+
+### Password Change Fails
+
+**Cause:** Current password incorrect.
+
+**Solution:** Verify current password:
+
+```bash
+# Test with login
+curl -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "your_user", "password": "current_password"}'
+```
+
+If login fails, contact an admin to reset your password (requires direct database access).
+
+## Next Steps
+
+- [Setting Up Peers](/guides/setting-up-peers) - Create database connections
+- [Creating Your First Mirror](/guides/creating-your-first-mirror) - Start replicating data
+- [API Reference](/api-reference) - Explore all available endpoints

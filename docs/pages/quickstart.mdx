@@ -1,0 +1,342 @@
+import { Callout, Steps } from 'nextra/components'
+
+# Quickstart
+
+Get your first BunnyDB mirror running in under 5 minutes.
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- **Docker** (version 20.10 or later)
+- **Docker Compose** (version 2.0 or later)
+- **4GB RAM** minimum available for containers
+- **curl** and **jq** for API testing (optional but recommended)
+
+## Quick Start
+
+<Steps>
+
+### Clone the repository
+
+```bash
+git clone https://github.com/Harshil-Jani/bunnyDB
+cd bunnyDB
+```
+
+### Start all services
+
+```bash
+docker compose up -d
+```
+
+This command starts 8 containers:
+- `catalog`: Internal PostgreSQL database for BunnyDB state
+- `temporal`: Workflow orchestration engine
+- `temporal-ui`: Temporal dashboard for monitoring workflows
+- `bunny-api`: REST API server
+- `bunny-worker`: CDC worker process
+- `bunny-ui`: Web dashboard
+- `source-db`: Test source database
+- `dest-db`: Test destination database
+
+### Wait for services to be healthy
+
+```bash
+docker compose ps
+```
+
+Wait until all services show `healthy` or `running` status. This typically takes 30-60 seconds.
+
+<Callout type="info">
+The catalog and test databases include health checks. Services depend on these being healthy before starting.
+</Callout>
+
+### Access the UI
+
+Open your browser to [http://localhost:3000](http://localhost:3000)
+
+**Default credentials:**
+- Username: `admin`
+- Password: `admin`
+
+<Callout type="warning">
+**Production Warning**: Change `BUNNY_JWT_SECRET` and `BUNNY_ADMIN_PASSWORD` in your environment variables before deploying to production.
+</Callout>
+
+### Create source peer (via API)
+
+First, obtain an authentication token:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin"}' | jq -r .token)
+```
+
+Then create the source peer pointing to the built-in test database:
+
+```bash
+curl -X POST http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "source",
+    "host": "source-db",
+    "port": 5432,
+    "user": "postgres",
+    "password": "sourcepass",
+    "database": "source_db"
+  }'
+```
+
+Expected response:
+```json
+{
+  "message": "Peer created successfully",
+  "peer": {
+    "name": "source",
+    "host": "source-db",
+    "port": 5432,
+    "database": "source_db"
+  }
+}
+```
+
+### Create destination peer
+
+```bash
+curl -X POST http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "destination",
+    "host": "dest-db",
+    "port": 5432,
+    "user": "postgres",
+    "password": "destpass",
+    "database": "dest_db"
+  }'
+```
+
+### Prepare test data (optional)
+
+Connect to the source database and create a sample table:
+
+```bash
+docker exec -it bunny-source-db psql -U postgres -d source_db -c "
+  CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT NOW()
+  );
+
+  INSERT INTO users (email) VALUES
+    ('alice@example.com'),
+    ('bob@example.com'),
+    ('charlie@example.com');
+"
+```
+
+### Create a mirror
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my_first_mirror",
+    "source_peer": "source",
+    "destination_peer": "destination",
+    "table_mappings": [
+      {
+        "source_table": "public.users",
+        "destination_table": "public.users"
+      }
+    ],
+    "do_initial_snapshot": true,
+    "max_batch_size": 1000,
+    "idle_timeout_seconds": 60,
+    "replicate_indexes": true
+  }'
+```
+
+**Key parameters:**
+- `do_initial_snapshot`: Copy existing data before starting CDC
+- `max_batch_size`: Number of changes to batch together
+- `idle_timeout_seconds`: Apply batch after this many seconds of inactivity
+- `replicate_indexes`: Replicate indexes from source to destination
+
+### Verify the mirror
+
+Check mirror status:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8112/v1/mirrors/my_first_mirror | jq
+```
+
+You should see output similar to:
+
+```json
+{
+  "name": "my_first_mirror",
+  "source_peer": "source",
+  "destination_peer": "destination",
+  "status": "RUNNING",
+  "last_lsn": "0/123ABC",
+  "table_mappings": [
+    {
+      "source_table": "public.users",
+      "destination_table": "public.users"
+    }
+  ],
+  "created_at": "2026-01-24T10:30:00Z"
+}
+```
+
+**Mirror states:**
+- `CREATED`: Mirror configuration created
+- `SETTING_UP`: Creating replication slot and publication
+- `SNAPSHOT`: Copying initial data
+- `RUNNING`: Actively replicating changes
+
+### Test live replication
+
+Insert a new row in the source database:
+
+```bash
+docker exec -it bunny-source-db psql -U postgres -d source_db -c \
+  "INSERT INTO users (email) VALUES ('diana@example.com');"
+```
+
+Verify it appears in the destination:
+
+```bash
+docker exec -it bunny-dest-db psql -U postgres -d dest_db -c \
+  "SELECT * FROM users WHERE email = 'diana@example.com';"
+```
+
+The row should appear within seconds (depending on `idle_timeout_seconds`).
+
+</Steps>
+
+## What's Next?
+
+Now that you have a working mirror, explore these topics:
+
+- **[Architecture](/architecture)**: Understand how BunnyDB works under the hood
+- **[Concepts](/concepts)**: Learn about peers, mirrors, signals, and LSNs
+- **[API Reference](/api-reference)**: Explore all API endpoints for advanced operations
+
+## Monitoring
+
+### Temporal UI
+
+Visit [http://localhost:8085](http://localhost:8085) to view Temporal workflows:
+
+- See running `CDCFlowWorkflow` instances
+- Monitor workflow execution history
+- Debug failed activities and retry attempts
+
+Each mirror runs as a long-lived Temporal workflow that uses `ContinueAsNew` to avoid history limits.
+
+### BunnyDB Dashboard
+
+The web UI at [http://localhost:3000](http://localhost:3000) provides:
+
+- Real-time mirror status
+- Recent sync statistics
+- Error logs and alerts
+- Quick actions (Pause, Resume, Resync)
+
+## Common Operations
+
+### Pause a mirror
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my_first_mirror/pause \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Resume a mirror
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my_first_mirror/resume \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Resync a specific table
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my_first_mirror/resync \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "table_name": "public.users",
+    "strategy": "swap"
+  }'
+```
+
+<Callout>
+The `swap` strategy ensures zero downtime during resync by using shadow tables.
+</Callout>
+
+## Cleanup
+
+To stop all services:
+
+```bash
+docker compose down
+```
+
+To remove all data volumes:
+
+```bash
+docker compose down -v
+```
+
+## Troubleshooting
+
+### Services won't start
+
+Check logs for specific services:
+
+```bash
+docker compose logs bunny-api
+docker compose logs bunny-worker
+docker compose logs catalog
+```
+
+### Mirror stuck in SETTING_UP
+
+Ensure the source database has logical replication enabled. The test databases include this by default, but external databases need:
+
+```sql
+-- In postgresql.conf
+wal_level = logical
+max_replication_slots = 10
+max_wal_senders = 10
+```
+
+### Authentication errors
+
+Verify your token is still valid. Tokens expire after 24 hours by default:
+
+```bash
+# Get a fresh token
+TOKEN=$(curl -s -X POST http://localhost:8112/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin"}' | jq -r .token)
+```
+
+### Replication lag
+
+Check Temporal UI for activity failures or retries. Common causes:
+- Network latency between source and destination
+- Destination database under heavy load
+- Large transactions causing batch backlog
+
+<Callout type="info">
+For production deployments, tune `max_batch_size` and `idle_timeout_seconds` based on your workload characteristics.
+</Callout>

@@ -1,0 +1,523 @@
+import { Callout, Tabs } from 'nextra/components'
+
+# Configuration
+
+Configure BunnyDB using environment variables and mirror creation parameters. This page covers all configuration options for running BunnyDB in development and production environments.
+
+## Environment Variables
+
+BunnyDB is configured through environment variables. Set these in your Docker Compose file, Kubernetes manifests, or shell environment.
+
+### Catalog Database
+
+The catalog database stores BunnyDB's metadata including peers, mirrors, users, and logs.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BUNNY_CATALOG_HOST` | `catalog` | Catalog PostgreSQL hostname |
+| `BUNNY_CATALOG_PORT` | `5432` | Catalog PostgreSQL port |
+| `BUNNY_CATALOG_USER` | `postgres` | Catalog database username |
+| `BUNNY_CATALOG_PASSWORD` | `bunnydb` | Catalog database password |
+| `BUNNY_CATALOG_DATABASE` | `bunnydb` | Catalog database name |
+
+**Example:**
+
+```bash
+BUNNY_CATALOG_HOST=catalog-db.example.com
+BUNNY_CATALOG_PORT=5432
+BUNNY_CATALOG_USER=bunny_admin
+BUNNY_CATALOG_PASSWORD=secure-catalog-password
+BUNNY_CATALOG_DATABASE=bunnydb_catalog
+```
+
+<Callout type="info">
+The catalog database is created automatically on first startup if it doesn't exist. BunnyDB will run migrations to set up the required schema.
+</Callout>
+
+### Temporal
+
+BunnyDB uses Temporal for workflow orchestration. The API and worker connect to a Temporal server.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TEMPORAL_HOST_PORT` | `temporal:7233` | Temporal server host:port |
+| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace to use |
+
+**Example:**
+
+```bash
+TEMPORAL_HOST_PORT=temporal.example.com:7233
+TEMPORAL_NAMESPACE=production
+```
+
+<Callout type="warning">
+Temporal must be running before starting BunnyDB. Use the included `docker-compose.yml` or connect to an existing Temporal cluster.
+</Callout>
+
+### Worker
+
+The worker process executes replication workflows.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BUNNY_WORKER_TASK_QUEUE` | `bunny-worker` | Temporal task queue name |
+
+**Example:**
+
+```bash
+BUNNY_WORKER_TASK_QUEUE=production-worker-queue
+```
+
+<Callout type="info">
+The task queue name must match between the API and worker. Multiple workers can share the same task queue for horizontal scaling.
+</Callout>
+
+### Authentication
+
+Configure JWT-based authentication and the default admin user.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BUNNY_JWT_SECRET` | Auto-generated | Secret key for signing JWT tokens |
+| `BUNNY_ADMIN_USER` | `admin` | Default admin username |
+| `BUNNY_ADMIN_PASSWORD` | `admin` | Default admin password |
+
+**Example:**
+
+```bash
+BUNNY_JWT_SECRET=your-very-long-random-secret-key-here-min-32-chars
+BUNNY_ADMIN_USER=superadmin
+BUNNY_ADMIN_PASSWORD=strong-password-here
+```
+
+<Callout type="error">
+**Security Critical**: In production, always set a strong `BUNNY_JWT_SECRET` and change the default admin password. The auto-generated JWT secret is not persistent across container restarts.
+</Callout>
+
+### Generating a Secure JWT Secret
+
+Use a cryptographically secure random string of at least 32 characters:
+
+<Tabs items={['OpenSSL', 'Node.js', 'Python']}>
+<Tabs.Tab>
+```bash
+openssl rand -base64 32
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+</Tabs.Tab>
+</Tabs>
+
+## Mirror Configuration Parameters
+
+When creating a mirror via the API, these parameters control snapshot and CDC behavior.
+
+### Snapshot Parameters
+
+Control the initial snapshot phase where existing data is copied to the destination.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `snapshot_num_rows_per_partition` | number | `500000` | Number of rows per partition during parallel snapshot |
+| `snapshot_max_parallel_workers` | number | `4` | Maximum parallel workers per table snapshot |
+| `snapshot_num_tables_in_parallel` | number | `4` | Number of tables to snapshot simultaneously |
+| `do_initial_snapshot` | boolean | `true` | Whether to perform initial snapshot before CDC |
+
+**Example:**
+
+```json
+{
+  "snapshot_num_rows_per_partition": 1000000,
+  "snapshot_max_parallel_workers": 8,
+  "snapshot_num_tables_in_parallel": 2,
+  "do_initial_snapshot": true
+}
+```
+
+#### Tuning Snapshot Performance
+
+**Small databases (< 1GB)**
+- `snapshot_num_rows_per_partition`: 500000
+- `snapshot_max_parallel_workers`: 4
+- `snapshot_num_tables_in_parallel`: 4
+
+**Medium databases (1-100GB)**
+- `snapshot_num_rows_per_partition`: 1000000
+- `snapshot_max_parallel_workers`: 8
+- `snapshot_num_tables_in_parallel`: 2
+
+**Large databases (> 100GB)**
+- `snapshot_num_rows_per_partition`: 2000000
+- `snapshot_max_parallel_workers`: 16
+- `snapshot_num_tables_in_parallel`: 1
+
+<Callout type="warning">
+Higher parallelism increases load on source and destination databases. Monitor CPU, memory, and I/O during snapshot to avoid impacting production workloads.
+</Callout>
+
+### CDC Parameters
+
+Control the continuous replication phase.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `cdc_sync_interval_seconds` | number | `60` | How often to poll for new changes (seconds) |
+| `cdc_batch_size` | number | `10000` | Maximum changes per batch |
+
+**Example:**
+
+```json
+{
+  "cdc_sync_interval_seconds": 30,
+  "cdc_batch_size": 5000
+}
+```
+
+#### Tuning CDC Performance
+
+**Low-latency replication**
+- `cdc_sync_interval_seconds`: 10-30
+- `cdc_batch_size`: 1000-5000
+- Trade-off: More frequent polling, higher overhead
+
+**High-throughput replication**
+- `cdc_sync_interval_seconds`: 60-300
+- `cdc_batch_size`: 10000-50000
+- Trade-off: Larger batches, higher latency
+
+**Balanced (default)**
+- `cdc_sync_interval_seconds`: 60
+- `cdc_batch_size`: 10000
+
+<Callout type="info">
+Smaller `cdc_sync_interval_seconds` reduces replication lag but increases database load. Larger `cdc_batch_size` improves throughput but may cause longer transaction times on the destination.
+</Callout>
+
+### Publication and Slot Names
+
+Optionally specify custom names for PostgreSQL logical replication resources.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `publication_name` | string | Auto-generated | PostgreSQL publication name on source |
+| `replication_slot_name` | string | Auto-generated | PostgreSQL replication slot name on source |
+
+**Example:**
+
+```json
+{
+  "publication_name": "bunny_pub_prod_analytics",
+  "replication_slot_name": "bunny_slot_prod_analytics"
+}
+```
+
+<Callout type="info">
+If not specified, BunnyDB auto-generates names based on the mirror name. Custom names are useful for managing multiple BunnyDB instances or integrating with existing replication setups.
+</Callout>
+
+## Source Database Requirements
+
+The source PostgreSQL database must be configured for logical replication.
+
+### Required PostgreSQL Settings
+
+Add these to `postgresql.conf` on the source database:
+
+```ini
+# Enable logical replication
+wal_level = logical
+
+# Replication slots (one per mirror)
+max_replication_slots = 10
+
+# WAL senders (one per active replication slot)
+max_wal_senders = 10
+
+# Optional: Increase WAL size for high-traffic databases
+wal_keep_size = 1GB
+```
+
+After changing these settings, restart PostgreSQL:
+
+```bash
+sudo systemctl restart postgresql
+```
+
+### Verify Configuration
+
+```sql
+-- Check wal_level
+SHOW wal_level;
+-- Should return: logical
+
+-- Check replication slots capacity
+SHOW max_replication_slots;
+SHOW max_wal_senders;
+
+-- View active replication slots
+SELECT * FROM pg_replication_slots;
+```
+
+### User Permissions
+
+The replication user needs these permissions:
+
+```sql
+-- Create replication user
+CREATE USER bunny_replication WITH REPLICATION PASSWORD 'secure-password';
+
+-- Grant permissions on database
+GRANT CONNECT ON DATABASE production TO bunny_replication;
+
+-- Grant schema permissions
+GRANT USAGE ON SCHEMA public TO bunny_replication;
+
+-- Grant table permissions (for all tables to replicate)
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO bunny_replication;
+
+-- Grant permissions for future tables
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT ON TABLES TO bunny_replication;
+```
+
+### pg_hba.conf
+
+Allow replication connections in `pg_hba.conf`:
+
+```
+# Allow replication from BunnyDB worker
+host    replication     bunny_replication    10.0.0.0/8    md5
+host    production      bunny_replication    10.0.0.0/8    md5
+```
+
+Reload PostgreSQL after changes:
+
+```bash
+sudo systemctl reload postgresql
+```
+
+## Destination Database Requirements
+
+The destination database has minimal requirements:
+
+- PostgreSQL 10 or later (same version as source recommended)
+- User with `CREATE`, `INSERT`, `UPDATE`, `DELETE` permissions on destination schemas
+- Sufficient disk space for replicated data
+
+### Destination User Permissions
+
+```sql
+-- Create destination user
+CREATE USER bunny_destination WITH PASSWORD 'secure-password';
+
+-- Grant database permissions
+GRANT CONNECT ON DATABASE analytics TO bunny_destination;
+
+-- Grant schema permissions
+GRANT CREATE, USAGE ON SCHEMA public TO bunny_destination;
+
+-- Grant table permissions
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO bunny_destination;
+
+-- Grant permissions for future tables (BunnyDB creates tables during snapshot)
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO bunny_destination;
+```
+
+## Production Recommendations
+
+### Security
+
+<Callout type="error">
+**Critical Security Settings:**
+
+1. Set a strong `BUNNY_JWT_SECRET` (32+ random characters)
+2. Change default admin password via `BUNNY_ADMIN_PASSWORD`
+3. Use SSL/TLS for all database connections (`ssl_mode: require` or higher)
+4. Deploy BunnyDB in a private network, not exposed to the public internet
+5. Use strong passwords for all database users
+6. Enable PostgreSQL SSL: `ssl = on` in `postgresql.conf`
+</Callout>
+
+### SSL Configuration
+
+Configure SSL for peer connections:
+
+```json
+{
+  "name": "production-db",
+  "host": "prod-db.example.com",
+  "port": 5432,
+  "user": "bunny_replication",
+  "password": "secure-password",
+  "database": "production",
+  "ssl_mode": "verify-full"
+}
+```
+
+SSL modes (in order of security):
+- `disable` - No SSL (development only)
+- `prefer` - Use SSL if available
+- `require` - Require SSL connection
+- `verify-ca` - Require SSL and verify CA certificate
+- `verify-full` - Require SSL and verify hostname (most secure)
+
+### Resource Sizing
+
+**Small deployment (< 10GB, < 100 changes/sec)**
+- API: 512MB RAM, 1 CPU
+- Worker: 1GB RAM, 2 CPU
+- Catalog DB: 512MB RAM, 1 CPU
+
+**Medium deployment (10-100GB, 100-1000 changes/sec)**
+- API: 1GB RAM, 2 CPU
+- Worker: 2GB RAM, 4 CPU
+- Catalog DB: 1GB RAM, 2 CPU
+
+**Large deployment (> 100GB, > 1000 changes/sec)**
+- API: 2GB RAM, 4 CPU
+- Worker: 4GB+ RAM, 8+ CPU (scale horizontally with multiple workers)
+- Catalog DB: 2GB RAM, 4 CPU
+
+### Batch Size Tuning
+
+Monitor these metrics to tune `cdc_batch_size`:
+
+- **Too small** (< 1000): High overhead, frequent polls, low throughput
+- **Optimal** (1000-50000): Balanced latency and throughput
+- **Too large** (> 50000): Long transactions, destination lock contention, high memory
+
+Signs your batch size is too large:
+- Destination database lock timeouts
+- High memory usage on worker
+- Long transaction durations (> 30 seconds)
+
+### Monitoring
+
+Set up monitoring for:
+
+- Replication lag (LSN difference between source and mirror)
+- Batch throughput (changes/second)
+- Error count and error rate
+- Replication slot disk usage on source
+- Worker CPU and memory usage
+
+See [Monitoring](/monitoring) for detailed guidance.
+
+## Docker Compose Example
+
+Complete `docker-compose.yml` with production-ready settings:
+
+```yaml
+version: '3.8'
+
+services:
+  catalog:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: bunny_catalog
+      POSTGRES_PASSWORD: secure-catalog-password
+      POSTGRES_DB: bunnydb
+    volumes:
+      - catalog-data:/var/lib/postgresql/data
+    networks:
+      - bunnydb
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal-password
+      - POSTGRES_SEEDS=temporal-db
+    depends_on:
+      - temporal-db
+    networks:
+      - bunnydb
+
+  temporal-db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal-password
+    volumes:
+      - temporal-data:/var/lib/postgresql/data
+    networks:
+      - bunnydb
+
+  bunny-api:
+    image: bunnydb/api:latest
+    ports:
+      - "8112:8112"
+    environment:
+      BUNNY_CATALOG_HOST: catalog
+      BUNNY_CATALOG_PORT: 5432
+      BUNNY_CATALOG_USER: bunny_catalog
+      BUNNY_CATALOG_PASSWORD: secure-catalog-password
+      BUNNY_CATALOG_DATABASE: bunnydb
+      TEMPORAL_HOST_PORT: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      BUNNY_WORKER_TASK_QUEUE: bunny-worker
+      BUNNY_JWT_SECRET: your-very-long-random-secret-key-here-min-32-chars
+      BUNNY_ADMIN_USER: admin
+      BUNNY_ADMIN_PASSWORD: strong-admin-password
+    depends_on:
+      - catalog
+      - temporal
+    networks:
+      - bunnydb
+
+  bunny-worker:
+    image: bunnydb/worker:latest
+    environment:
+      BUNNY_CATALOG_HOST: catalog
+      BUNNY_CATALOG_PORT: 5432
+      BUNNY_CATALOG_USER: bunny_catalog
+      BUNNY_CATALOG_PASSWORD: secure-catalog-password
+      BUNNY_CATALOG_DATABASE: bunnydb
+      TEMPORAL_HOST_PORT: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      BUNNY_WORKER_TASK_QUEUE: bunny-worker
+    depends_on:
+      - catalog
+      - temporal
+    networks:
+      - bunnydb
+    deploy:
+      replicas: 2  # Run multiple workers for high availability
+
+volumes:
+  catalog-data:
+  temporal-data:
+
+networks:
+  bunnydb:
+    driver: bridge
+```
+
+## Environment Variables Reference
+
+Quick reference table of all environment variables:
+
+| Variable | Component | Default | Required |
+|----------|-----------|---------|----------|
+| `BUNNY_CATALOG_HOST` | API, Worker | `catalog` | No |
+| `BUNNY_CATALOG_PORT` | API, Worker | `5432` | No |
+| `BUNNY_CATALOG_USER` | API, Worker | `postgres` | No |
+| `BUNNY_CATALOG_PASSWORD` | API, Worker | `bunnydb` | No |
+| `BUNNY_CATALOG_DATABASE` | API, Worker | `bunnydb` | No |
+| `TEMPORAL_HOST_PORT` | API, Worker | `temporal:7233` | No |
+| `TEMPORAL_NAMESPACE` | API, Worker | `default` | No |
+| `BUNNY_WORKER_TASK_QUEUE` | API, Worker | `bunny-worker` | No |
+| `BUNNY_JWT_SECRET` | API | Auto-generated | No (Yes for production) |
+| `BUNNY_ADMIN_USER` | API | `admin` | No |
+| `BUNNY_ADMIN_PASSWORD` | API | `admin` | No (Change for production) |

@@ -1,0 +1,289 @@
+import { Callout, Steps } from 'nextra/components'
+
+# Pause & Resume
+
+Pausing and resuming mirrors is essential for maintenance operations, debugging, and schema modifications. BunnyDB preserves the replication slot during pause, ensuring no data is lost.
+
+## Use Cases
+
+Common scenarios where pausing a mirror is useful:
+
+- **Maintenance windows**: Perform destination database maintenance without replication interference
+- **Debugging data issues**: Investigate discrepancies while preventing new changes
+- **Schema changes**: Safely modify destination schema before syncing
+- **Table mapping updates**: Add, remove, or modify table mappings
+- **Resource management**: Temporarily reduce load on source or destination
+
+## Pausing a Mirror
+
+To pause an active mirror:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/pause \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Response
+
+```json
+{
+  "message": "Mirror 'prod_to_staging' paused successfully"
+}
+```
+
+### What Happens When Paused
+
+<Steps>
+
+### CDC Activity Cancelled
+
+The active sync worker is gracefully shut down. In-flight transactions are rolled back.
+
+### Replication Slot Preserved
+
+The PostgreSQL replication slot on the source remains active and continues to retain WAL (Write-Ahead Log) data.
+
+<Callout type="warning">
+While paused, WAL accumulates on the source database. Monitor disk usage and slot lag to prevent storage issues.
+</Callout>
+
+### Status Updated
+
+The mirror status transitions to `PAUSED`:
+
+```bash
+curl -X GET http://localhost:8112/v1/mirrors/prod_to_staging \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```json
+{
+  "name": "prod_to_staging",
+  "status": "PAUSED",
+  "current_phase": "CDC",
+  "source_peer": "source_db",
+  "destination_peer": "dest_db"
+}
+```
+
+</Steps>
+
+## Updating Table Mappings While Paused
+
+One of the key benefits of pausing is the ability to modify table mappings safely:
+
+```bash
+curl -X PUT http://localhost:8112/v1/mirrors/prod_to_staging/tables \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "table_mappings": [
+      {
+        "source_table": "public.users",
+        "destination_table": "public.users",
+        "partition_key": "id"
+      },
+      {
+        "source_table": "public.orders",
+        "destination_table": "public.orders",
+        "partition_key": "user_id"
+      },
+      {
+        "source_table": "public.products",
+        "destination_table": "public.products",
+        "partition_key": "id",
+        "exclude_columns": ["internal_cost"]
+      }
+    ]
+  }'
+```
+
+### Response
+
+```json
+{
+  "message": "Table mappings updated successfully for mirror 'prod_to_staging'"
+}
+```
+
+<Callout type="info">
+Adding new tables while paused will trigger a snapshot for those tables when you resume. Existing tables continue from their last CDC position.
+</Callout>
+
+## Resuming a Mirror
+
+Resume CDC replication from where it left off:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resume \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Response
+
+```json
+{
+  "message": "Mirror 'prod_to_staging' resumed successfully"
+}
+```
+
+### What Happens on Resume
+
+<Steps>
+
+### LSN Position Retrieved
+
+BunnyDB reads the last committed LSN (Log Sequence Number) from its metadata store.
+
+### Replication Slot Reconnected
+
+The CDC worker reconnects to the existing replication slot on the source database.
+
+### Changes Replayed
+
+All changes that occurred while paused are replayed in order, starting from the last committed LSN.
+
+```bash
+# Check status after resume
+curl -X GET http://localhost:8112/v1/mirrors/prod_to_staging \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+```json
+{
+  "name": "prod_to_staging",
+  "status": "RUNNING",
+  "current_phase": "CDC",
+  "lag_bytes": 15360,
+  "lag_seconds": 5.2
+}
+```
+
+### Lag Catches Up
+
+Depending on how long the mirror was paused, there may be initial lag. BunnyDB processes backlog changes until it's caught up with the current source state.
+
+</Steps>
+
+## Monitoring Replication Slot Lag
+
+While a mirror is paused, monitor the replication slot to ensure WAL doesn't grow unbounded:
+
+```sql
+-- Run on source database
+SELECT slot_name,
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS lag_size,
+       active
+FROM pg_replication_slots
+WHERE slot_name LIKE 'bunny_%';
+```
+
+**Example output:**
+
+```
+       slot_name        | lag_size | active
+-----------------------+----------+--------
+ bunny_prod_to_staging | 2048 MB  | f
+```
+
+<Callout type="error">
+If lag grows beyond available disk space, PostgreSQL may run out of storage. In production, set up alerts for replication slot lag and avoid long pauses.
+</Callout>
+
+## Best Practices
+
+### Pause Before Schema Changes
+
+Always pause before modifying destination schema:
+
+```bash
+# 1. Pause the mirror
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/pause \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# 2. Apply schema changes to destination
+psql -h dest_db -d production -c "ALTER TABLE users ADD COLUMN last_login TIMESTAMP;"
+
+# 3. Sync schema from source (optional, if change exists on source too)
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/sync-schema \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# 4. Resume replication
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resume \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Set Maximum Pause Duration
+
+For operational safety, establish a maximum pause duration policy:
+
+- **Short-term pauses** (< 1 hour): Generally safe for most workloads
+- **Medium-term pauses** (1-8 hours): Monitor slot lag closely
+- **Long-term pauses** (> 8 hours): Consider dropping the mirror and recreating with a fresh snapshot
+
+### Automate Pause for Maintenance Windows
+
+Use scripts to pause mirrors during scheduled maintenance:
+
+```bash
+#!/bin/bash
+# maintenance.sh
+
+MIRRORS=("prod_to_staging" "prod_to_analytics")
+TOKEN="your_admin_token"
+
+for mirror in "${MIRRORS[@]}"; do
+  echo "Pausing $mirror..."
+  curl -X POST http://localhost:8112/v1/mirrors/$mirror/pause \
+    -H "Authorization: Bearer $TOKEN"
+done
+
+# Perform maintenance
+echo "Running maintenance tasks..."
+# ... maintenance operations ...
+
+for mirror in "${MIRRORS[@]}"; do
+  echo "Resuming $mirror..."
+  curl -X POST http://localhost:8112/v1/mirrors/$mirror/resume \
+    -H "Authorization: Bearer $TOKEN"
+done
+```
+
+## Troubleshooting
+
+### Resume Fails with "Replication Slot Not Found"
+
+**Cause:** The replication slot was manually dropped or the source database was rebuilt.
+
+**Solution:** Drop and recreate the mirror:
+
+```bash
+# Delete the mirror
+curl -X DELETE http://localhost:8112/v1/mirrors/prod_to_staging \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Recreate with fresh snapshot
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @mirror_config.json
+```
+
+### Mirror Shows PAUSED but I Didn't Pause It
+
+**Cause:** An error occurred during CDC that caused automatic pause.
+
+**Solution:** Check mirror logs for errors:
+
+```bash
+# View logs (adjust based on your deployment)
+docker logs bunnydb --tail 100 | grep prod_to_staging
+```
+
+Fix the underlying issue (e.g., schema mismatch, permission error), then resume.
+
+## Next Steps
+
+- [Table-Level Resync](/guides/table-level-resync) - Resync specific tables
+- [Schema Sync](/guides/schema-sync) - Handle schema evolution
+- [Zero-Downtime Swap Resync](/guides/zero-downtime-swap-resync) - Resync without downtime

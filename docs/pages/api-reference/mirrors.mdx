@@ -1,0 +1,433 @@
+import { Callout, Tabs } from 'nextra/components'
+
+# Mirrors
+
+Mirrors are the core of BunnyDB - they represent active CDC (Change Data Capture) replication streams from a source PostgreSQL database to a destination PostgreSQL database.
+
+## List Mirrors
+
+Retrieve all configured replication mirrors with their current status.
+
+### Endpoint
+
+```
+GET /v1/mirrors
+```
+
+**Permission**: `authed` (any authenticated user)
+
+### Response
+
+Returns an array of mirror objects with basic status information.
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+[
+  {
+    "name": "prod-to-analytics",
+    "source_peer": "production-db",
+    "destination_peer": "analytics-db",
+    "status": "running",
+    "last_lsn": "0/1A2B3C4D",
+    "last_sync_batch_id": 42,
+    "created_at": "2024-01-15T10:00:00Z"
+  },
+  {
+    "name": "staging-replica",
+    "source_peer": "production-db",
+    "destination_peer": "staging-db",
+    "status": "paused",
+    "last_lsn": "0/1A2B3C40",
+    "last_sync_batch_id": 38,
+    "created_at": "2024-01-16T14:00:00Z"
+  }
+]
+```
+</Tabs.Tab>
+</Tabs>
+
+## Create Mirror
+
+Create a new replication mirror. This operation starts the initial snapshot and begins CDC replication.
+
+### Endpoint
+
+```
+POST /v1/mirrors
+```
+
+**Permission**: `adminOnly`
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique identifier for this mirror |
+| `source_peer` | string | Yes | Name of the source peer |
+| `destination_peer` | string | Yes | Name of the destination peer |
+| `table_mappings` | array | Yes | Array of table mapping objects |
+| `snapshot_num_rows_per_partition` | number | No | Rows per partition during snapshot (default: 500000) |
+| `snapshot_max_parallel_workers` | number | No | Max parallel workers for snapshot (default: 4) |
+| `snapshot_num_tables_in_parallel` | number | No | Tables to snapshot in parallel (default: 4) |
+| `cdc_sync_interval_seconds` | number | No | CDC polling interval (default: 60) |
+| `cdc_batch_size` | number | No | Changes per batch (default: 10000) |
+| `do_initial_snapshot` | boolean | No | Perform initial snapshot (default: true) |
+| `publication_name` | string | No | Custom publication name (auto-generated if not provided) |
+| `replication_slot_name` | string | No | Custom replication slot name (auto-generated if not provided) |
+
+#### Table Mapping Object
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `source_schema` | string | Yes | Source schema name |
+| `source_table` | string | Yes | Source table name |
+| `destination_schema` | string | Yes | Destination schema name |
+| `destination_table` | string | Yes | Destination table name |
+| `exclude_columns` | array | No | Column names to exclude from replication |
+
+### Response
+
+Returns the created mirror configuration.
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "prod-to-analytics",
+    "source_peer": "production-db",
+    "destination_peer": "analytics-db",
+    "table_mappings": [
+      {
+        "source_schema": "public",
+        "source_table": "users",
+        "destination_schema": "public",
+        "destination_table": "users",
+        "exclude_columns": ["password_hash", "ssn"]
+      },
+      {
+        "source_schema": "public",
+        "source_table": "orders",
+        "destination_schema": "public",
+        "destination_table": "orders"
+      }
+    ],
+    "snapshot_num_rows_per_partition": 500000,
+    "snapshot_max_parallel_workers": 4,
+    "snapshot_num_tables_in_parallel": 2,
+    "cdc_sync_interval_seconds": 30,
+    "cdc_batch_size": 10000,
+    "do_initial_snapshot": true
+  }'
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "name": "prod-to-analytics",
+  "source_peer": "production-db",
+  "destination_peer": "analytics-db",
+  "status": "initializing",
+  "table_mappings": [
+    {
+      "source_schema": "public",
+      "source_table": "users",
+      "destination_schema": "public",
+      "destination_table": "users",
+      "exclude_columns": ["password_hash", "ssn"]
+    },
+    {
+      "source_schema": "public",
+      "source_table": "orders",
+      "destination_schema": "public",
+      "destination_table": "orders"
+    }
+  ],
+  "created_at": "2024-01-15T10:00:00Z"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+**Initial Snapshot**: By default, BunnyDB performs an initial snapshot of all tables before starting CDC. Set `do_initial_snapshot: false` if tables are already populated and you only want to capture new changes.
+</Callout>
+
+<Callout type="warning">
+**Performance Tuning**: Adjust `snapshot_num_rows_per_partition`, `snapshot_max_parallel_workers`, and `cdc_batch_size` based on your database size and network capacity. See [Configuration](/configuration) for tuning recommendations.
+</Callout>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 400 | Bad Request | Invalid parameters or missing required fields |
+| 401 | Unauthorized | Missing or invalid token |
+| 403 | Forbidden | User does not have admin role |
+| 409 | Conflict | Mirror name already exists |
+
+## Get Mirror Status
+
+Retrieve detailed status information for a specific mirror.
+
+### Endpoint
+
+```
+GET /v1/mirrors/{name}
+```
+
+**Permission**: `authed` (any authenticated user)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Mirror name |
+| `source_peer` | string | Source peer name |
+| `destination_peer` | string | Destination peer name |
+| `status` | string | Current status (see statuses below) |
+| `last_lsn` | string | Last replicated LSN (Log Sequence Number) |
+| `last_sync_batch_id` | number | Last applied batch ID |
+| `error_message` | string | Error message if status is `error` |
+| `error_count` | number | Number of consecutive errors |
+| `tables` | array | Per-table sync status |
+| `created_at` | string | ISO 8601 timestamp |
+| `updated_at` | string | ISO 8601 timestamp |
+
+#### Table Status Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_name` | string | Fully qualified table name (schema.table) |
+| `status` | string | Table sync status |
+| `rows_synced` | number | Total rows synced |
+| `rows_inserted` | number | Rows inserted during CDC |
+| `rows_updated` | number | Rows updated during CDC |
+| `rows_deleted` | number | Rows deleted during CDC |
+| `last_synced_at` | string | ISO 8601 timestamp |
+
+#### Mirror Statuses
+
+| Status | Description |
+|--------|-------------|
+| `initializing` | Mirror is being set up |
+| `snapshotting` | Initial snapshot in progress |
+| `running` | CDC replication active |
+| `paused` | Mirror manually paused |
+| `error` | Error occurred, waiting for retry |
+| `stopped` | Mirror stopped (terminal state) |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/v1/mirrors/prod-to-analytics \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "name": "prod-to-analytics",
+  "source_peer": "production-db",
+  "destination_peer": "analytics-db",
+  "status": "running",
+  "last_lsn": "0/1A2B3C4D",
+  "last_sync_batch_id": 42,
+  "error_message": null,
+  "error_count": 0,
+  "tables": [
+    {
+      "table_name": "public.users",
+      "status": "syncing",
+      "rows_synced": 150000,
+      "rows_inserted": 1200,
+      "rows_updated": 850,
+      "rows_deleted": 45,
+      "last_synced_at": "2024-01-15T12:30:00Z"
+    },
+    {
+      "table_name": "public.orders",
+      "status": "syncing",
+      "rows_synced": 500000,
+      "rows_inserted": 5000,
+      "rows_updated": 2300,
+      "rows_deleted": 120,
+      "last_synced_at": "2024-01-15T12:30:00Z"
+    }
+  ],
+  "created_at": "2024-01-15T10:00:00Z",
+  "updated_at": "2024-01-15T12:30:00Z"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+## Delete Mirror
+
+Delete a mirror and clean up all associated resources (replication slot, publication, workflows).
+
+### Endpoint
+
+```
+DELETE /v1/mirrors/{name}
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `deleted` | string | Name of the deleted mirror |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X DELETE http://localhost:8112/v1/mirrors/prod-to-analytics \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "deleted": "prod-to-analytics"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="warning">
+**Cleanup**: Deleting a mirror terminates the Temporal workflow, drops the replication slot, and removes the publication from the source database. This operation cannot be undone. Data on the destination remains unchanged.
+</Callout>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 401 | Unauthorized | Missing or invalid token |
+| 403 | Forbidden | User does not have admin role |
+| 404 | Not Found | Mirror does not exist |
+
+## Understanding LSN (Log Sequence Number)
+
+The `last_lsn` field represents the PostgreSQL Write-Ahead Log (WAL) position that has been replicated. LSNs are in the format `segment/offset` (e.g., `0/1A2B3C4D`).
+
+**What it means:**
+- LSN advances as changes are replicated
+- If LSN stops advancing, replication may be stalled
+- Compare with source database's current LSN to calculate replication lag
+
+**Check source LSN:**
+```sql
+SELECT pg_current_wal_lsn();
+```
+
+**Check replication slot lag:**
+```sql
+SELECT slot_name,
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)) as lag
+FROM pg_replication_slots;
+```
+
+<Callout type="info">
+See [Monitoring](/monitoring) for more details on tracking replication health using LSN and other metrics.
+</Callout>
+
+## Common Workflows
+
+### Creating a Simple Mirror
+
+Replicate all tables from one database to another:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "simple-mirror",
+    "source_peer": "source-db",
+    "destination_peer": "dest-db",
+    "table_mappings": [
+      {
+        "source_schema": "public",
+        "source_table": "users",
+        "destination_schema": "public",
+        "destination_table": "users"
+      }
+    ]
+  }'
+```
+
+### Excluding Sensitive Columns
+
+Replicate tables while excluding PII or sensitive data:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "sanitized-mirror",
+    "source_peer": "source-db",
+    "destination_peer": "dest-db",
+    "table_mappings": [
+      {
+        "source_schema": "public",
+        "source_table": "users",
+        "destination_schema": "public",
+        "destination_table": "users",
+        "exclude_columns": ["password_hash", "ssn", "credit_card"]
+      }
+    ]
+  }'
+```
+
+### Skip Initial Snapshot
+
+Start CDC without snapshot (when destination already has data):
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "cdc-only-mirror",
+    "source_peer": "source-db",
+    "destination_peer": "dest-db",
+    "table_mappings": [...],
+    "do_initial_snapshot": false
+  }'
+```
+
+<Callout type="info">
+After creating a mirror, use the [Mirror Control](/api-reference/mirror-control) endpoints to pause, resume, resync, or manage the replication.
+</Callout>

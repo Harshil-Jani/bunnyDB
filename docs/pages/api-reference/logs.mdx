@@ -1,0 +1,417 @@
+import { Callout, Tabs } from 'nextra/components'
+
+# Logs
+
+Query structured logs for a specific mirror to monitor replication activity, debug issues, and track operational events.
+
+## Get Mirror Logs
+
+Retrieve logs for a specific mirror with filtering and pagination.
+
+### Endpoint
+
+```
+GET /v1/mirrors/{name}/logs
+```
+
+**Permission**: `authed` (any authenticated user)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique mirror name |
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | number | 50 | Number of logs to return (max 500) |
+| `offset` | number | 0 | Number of logs to skip (for pagination) |
+| `search` | string | - | Text search across log messages and details |
+| `level` | string | - | Filter by log level: `INFO`, `WARN`, `ERROR`, or `DEBUG` |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `logs` | array | Array of log entry objects |
+| `total` | number | Total number of logs matching the filter |
+| `offset` | number | Current offset (for pagination) |
+| `limit` | number | Current limit |
+
+#### Log Entry Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | number | Unique log entry ID |
+| `level` | string | Log level (`INFO`, `WARN`, `ERROR`, `DEBUG`) |
+| `message` | string | Human-readable log message |
+| `details` | object | Additional structured data (varies by log type) |
+| `created_at` | string | ISO 8601 timestamp |
+
+### Example: Basic Request
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/v1/mirrors/prod-to-analytics/logs \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "logs": [
+    {
+      "id": 1523,
+      "level": "INFO",
+      "message": "CDC batch applied successfully",
+      "details": {
+        "batch_id": 42,
+        "rows_processed": 1250,
+        "duration_ms": 324,
+        "lsn": "0/1A2B3C4D"
+      },
+      "created_at": "2024-01-15T12:35:00Z"
+    },
+    {
+      "id": 1522,
+      "level": "INFO",
+      "message": "CDC batch fetched from source",
+      "details": {
+        "batch_id": 42,
+        "rows_fetched": 1250,
+        "tables_affected": ["public.users", "public.orders"]
+      },
+      "created_at": "2024-01-15T12:34:58Z"
+    }
+  ],
+  "total": 1523,
+  "offset": 0,
+  "limit": 50
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+### Example: Filter by Log Level
+
+Retrieve only error logs:
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl "http://localhost:8112/v1/mirrors/prod-to-analytics/logs?level=ERROR" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "logs": [
+    {
+      "id": 1450,
+      "level": "ERROR",
+      "message": "Failed to apply CDC batch",
+      "details": {
+        "batch_id": 38,
+        "error": "pq: relation \"public.products\" does not exist",
+        "retry_count": 3
+      },
+      "created_at": "2024-01-15T11:22:15Z"
+    }
+  ],
+  "total": 5,
+  "offset": 0,
+  "limit": 50
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+### Example: Text Search
+
+Search logs for specific content:
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl "http://localhost:8112/v1/mirrors/prod-to-analytics/logs?search=snapshot" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "logs": [
+    {
+      "id": 125,
+      "level": "INFO",
+      "message": "Initial snapshot completed",
+      "details": {
+        "tables_snapshotted": 5,
+        "total_rows": 1500000,
+        "duration_seconds": 245
+      },
+      "created_at": "2024-01-15T10:15:30Z"
+    },
+    {
+      "id": 89,
+      "level": "INFO",
+      "message": "Starting initial snapshot",
+      "details": {
+        "tables": ["public.users", "public.orders", "public.products"]
+      },
+      "created_at": "2024-01-15T10:11:25Z"
+    }
+  ],
+  "total": 8,
+  "offset": 0,
+  "limit": 50
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+### Example: Pagination
+
+Retrieve the next page of logs:
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl "http://localhost:8112/v1/mirrors/prod-to-analytics/logs?limit=100&offset=100" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "logs": [
+    ... 100 log entries ...
+  ],
+  "total": 1523,
+  "offset": 100,
+  "limit": 100
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+### Example: Combine Filters
+
+Filter by level and search term:
+
+```bash
+curl "http://localhost:8112/v1/mirrors/prod-to-analytics/logs?level=ERROR&search=connection" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+## Log Levels
+
+BunnyDB logs use standard log levels:
+
+| Level | Description | Use Case |
+|-------|-------------|----------|
+| `DEBUG` | Detailed diagnostic information | Development, debugging complex issues |
+| `INFO` | General informational messages | Normal operations, progress tracking |
+| `WARN` | Warning messages for non-critical issues | Potential problems, degraded performance |
+| `ERROR` | Error messages for failures | Failed operations, exceptions, retries |
+
+<Callout type="info">
+In production, most logs are at the `INFO` level. Use `ERROR` level filtering to quickly identify issues requiring attention.
+</Callout>
+
+## Common Log Messages
+
+### Snapshot Phase
+
+| Message | Level | Description |
+|---------|-------|-------------|
+| Starting initial snapshot | INFO | Snapshot phase beginning |
+| Table snapshot completed | INFO | Individual table snapshot finished |
+| Initial snapshot completed | INFO | All tables snapshotted successfully |
+| Snapshot failed | ERROR | Snapshot encountered an error |
+
+### CDC Phase
+
+| Message | Level | Description |
+|---------|-------|-------------|
+| CDC batch fetched from source | INFO | Changes retrieved from WAL |
+| CDC batch applied successfully | INFO | Changes written to destination |
+| No changes in CDC batch | INFO | No new changes since last poll |
+| Failed to apply CDC batch | ERROR | Error applying changes |
+
+### Control Operations
+
+| Message | Level | Description |
+|---------|-------|-------------|
+| Mirror paused | INFO | Mirror paused via API |
+| Mirror resumed | INFO | Mirror resumed via API |
+| Schema sync initiated | INFO | Schema sync started |
+| Table resync started | INFO | Individual table resync started |
+| Retry signal received | INFO | RetryNow signal processed |
+
+### Errors and Warnings
+
+| Message | Level | Description |
+|---------|-------|-------------|
+| Replication slot already exists | ERROR | Slot conflict from previous run |
+| Connection timeout | ERROR | Cannot connect to database |
+| Heartbeat timeout | ERROR | Activity not responding |
+| Foreign key violation | WARN | FK constraint temporarily violated |
+
+## Using Logs for Monitoring
+
+### Check Recent Activity
+
+View the last 10 logs to see what's happening now:
+
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?limit=10" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Identify Recent Errors
+
+Find recent errors for troubleshooting:
+
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?level=ERROR&limit=20" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Track Snapshot Progress
+
+Search for snapshot-related logs:
+
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?search=snapshot" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Monitor CDC Throughput
+
+Search for batch application logs to see throughput:
+
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?search=batch+applied" \
+  -H "Authorization: Bearer <token>"
+```
+
+## Details Object Structure
+
+The `details` field contains structured data specific to each log type. Common fields include:
+
+### CDC Batch Logs
+
+```json
+{
+  "batch_id": 42,
+  "rows_processed": 1250,
+  "rows_inserted": 500,
+  "rows_updated": 600,
+  "rows_deleted": 150,
+  "duration_ms": 324,
+  "lsn": "0/1A2B3C4D",
+  "tables_affected": ["public.users", "public.orders"]
+}
+```
+
+### Snapshot Logs
+
+```json
+{
+  "table": "public.users",
+  "rows_snapshotted": 150000,
+  "duration_seconds": 45,
+  "partition": 3,
+  "total_partitions": 5
+}
+```
+
+### Error Logs
+
+```json
+{
+  "error": "pq: connection refused",
+  "retry_count": 3,
+  "next_retry_at": "2024-01-15T12:40:00Z",
+  "operation": "apply_cdc_batch"
+}
+```
+
+### Schema Sync Logs
+
+```json
+{
+  "tables": ["public.users", "public.orders"],
+  "ddl_statements": [
+    "ALTER TABLE users ADD COLUMN email_verified BOOLEAN"
+  ],
+  "duration_ms": 150
+}
+```
+
+## Pagination Best Practices
+
+For large log sets, use pagination to retrieve all logs efficiently:
+
+```bash
+# Get first page
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?limit=500&offset=0" \
+  -H "Authorization: Bearer <token>"
+
+# Get next page
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?limit=500&offset=500" \
+  -H "Authorization: Bearer <token>"
+
+# Continue until offset >= total
+```
+
+<Callout type="info">
+The maximum `limit` is 500. For retrieving large log sets, use multiple requests with increasing `offset` values.
+</Callout>
+
+## Integration with Monitoring
+
+Logs can be integrated into external monitoring and alerting systems:
+
+### Alert on Errors
+
+Poll for new error logs every minute:
+
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?level=ERROR&limit=10" \
+  -H "Authorization: Bearer <token>"
+```
+
+If new errors appear since last check, trigger an alert.
+
+### Track Throughput Metrics
+
+Extract `rows_processed` and `duration_ms` from CDC batch logs to calculate:
+
+- Rows per second: `rows_processed / (duration_ms / 1000)`
+- Average batch size
+- Replication lag based on timestamps
+
+### Monitor Replication Health
+
+Look for these patterns:
+
+- **Healthy**: Regular "CDC batch applied successfully" logs
+- **Stalled**: No logs for extended period
+- **Degraded**: Increasing error count or retry messages
+- **Failed**: Repeated errors with same error message
+
+<Callout type="info">
+For comprehensive monitoring strategies, see the [Monitoring](/monitoring) page.
+</Callout>
+
+## Related Endpoints
+
+- [Get Mirror Status](/api-reference/mirrors#get-mirror-status) - High-level status summary
+- [Mirror Control](/api-reference/mirror-control) - Control mirror operations
+- [Health Check](/api-reference/health) - Overall system health

@@ -1,0 +1,493 @@
+import { Callout, Steps } from 'nextra/components'
+
+# Zero-Downtime Swap Resync
+
+The swap resync strategy enables table resyncs without read downtime on the destination. This is critical for production systems where table availability must be maintained during data refresh operations.
+
+## The Problem with Truncate Resync
+
+The default truncate strategy has a significant downside:
+
+```sql
+-- During truncate resync
+TRUNCATE TABLE public.users;
+-- Table is now EMPTY
+
+-- Copy data (may take minutes or hours for large tables)
+COPY public.users FROM ...;
+-- Queries return no results during this entire period
+```
+
+**Impact:**
+- Read queries fail or return empty results
+- Applications show missing data
+- Downtime scales with table size
+
+For a 10GB table taking 5 minutes to copy, your application has **5 minutes of data unavailability**.
+
+## The Swap Strategy Solution
+
+The swap strategy eliminates this downtime by using a shadow table and atomic rename:
+
+```sql
+-- Create shadow table
+CREATE TABLE public.users_resync (LIKE public.users INCLUDING ALL);
+
+-- Copy to shadow (original table still serves reads)
+COPY public.users_resync FROM ...;
+
+-- Build indexes on shadow
+CREATE INDEX idx_users_email ON public.users_resync(email);
+
+-- Atomic swap (< 100ms downtime)
+BEGIN;
+ALTER TABLE public.users RENAME TO users_old;
+ALTER TABLE public.users_resync RENAME TO users;
+DROP TABLE public.users_old;
+COMMIT;
+```
+
+**Result:**
+- Original table remains available during copy
+- Swap takes milliseconds
+- Queries never see empty data
+
+## How Swap Resync Works
+
+<Steps>
+
+### Create Shadow Table
+
+BunnyDB creates a temporary table with suffix `_resync`:
+
+```sql
+CREATE TABLE public.users_resync (
+  LIKE public.users INCLUDING DEFAULTS INCLUDING CONSTRAINTS
+);
+```
+
+This table has the same schema but is initially empty.
+
+### Copy Data to Shadow Table
+
+Data is copied from source to the shadow table using PostgreSQL's `COPY`:
+
+```sql
+-- Parallel workers copy partitions
+COPY public.users_resync FROM PROGRAM '...' WITH (FORMAT binary);
+```
+
+<Callout type="info">
+During this phase, which may take minutes or hours, the original `public.users` table continues to serve read queries with existing data.
+</Callout>
+
+For large tables, BunnyDB partitions data based on `partition_key` and uses `snapshot_max_parallel_workers` to parallelize the copy.
+
+### Build Indexes on Shadow Table
+
+If `replicate_indexes: true`, indexes are created on the shadow table:
+
+```sql
+CREATE INDEX idx_users_email ON public.users_resync(email);
+CREATE INDEX idx_users_created_at ON public.users_resync(created_at);
+CREATE UNIQUE INDEX idx_users_username ON public.users_resync(username);
+```
+
+This can take significant time for large tables but doesn't affect the original table.
+
+### Pause CDC
+
+Before swapping, CDC replication is paused to prevent conflicting writes:
+
+```sql
+-- Last LSN position is recorded
+SELECT pg_current_wal_lsn();
+```
+
+<Callout type="warning">
+Changes on source accumulate in the replication slot during swap. For high-write tables, the swap should complete quickly to avoid excessive WAL buildup.
+</Callout>
+
+### Atomic Table Swap
+
+The critical step: rename tables atomically within a single transaction:
+
+```sql
+BEGIN;
+
+-- Rename old table to _old
+ALTER TABLE public.users RENAME TO users_old;
+
+-- Rename shadow table to production name
+ALTER TABLE public.users_resync RENAME TO users;
+
+-- Drop old table
+DROP TABLE public.users_old;
+
+COMMIT;
+```
+
+**Key properties:**
+- The entire swap is **atomic** (all-or-nothing)
+- Other transactions are **briefly blocked** during the rename (&lt;100ms typically)
+- Queries never see an empty or missing table
+- No data loss occurs
+
+### Recreate Foreign Keys
+
+If `replicate_foreign_keys: true`, foreign keys are recreated to reference the new table:
+
+```sql
+-- Drop FK on referencing table
+ALTER TABLE orders DROP CONSTRAINT fk_orders_user_id;
+
+-- Recreate FK pointing to new table
+ALTER TABLE orders ADD CONSTRAINT fk_orders_user_id
+  FOREIGN KEY (user_id) REFERENCES public.users(id);
+```
+
+### Resume CDC
+
+CDC restarts from the preserved LSN, replaying changes that occurred during swap:
+
+```sql
+-- Replication slot reconnects
+SELECT * FROM pg_logical_slot_get_changes('bunny_prod_to_staging', ...);
+```
+
+</Steps>
+
+## Configuring Swap Resync
+
+Set the `resync_strategy` parameter when creating a mirror:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "prod_to_staging",
+    "source_peer": "source_db",
+    "destination_peer": "dest_db",
+    "resync_strategy": "swap",
+    "do_initial_snapshot": true,
+    "replicate_indexes": true,
+    "replicate_foreign_keys": true,
+    "table_mappings": [
+      {
+        "source_table": "public.users",
+        "destination_table": "public.users",
+        "partition_key": "id"
+      }
+    ]
+  }'
+```
+
+<Callout type="info">
+The `resync_strategy` applies to both table-level resyncs and full mirror resyncs. It cannot be changed after mirror creation.
+</Callout>
+
+## Triggering Swap Resync
+
+Once configured, all resync operations use the swap strategy:
+
+### Table-Level Resync
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resync/public.users \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Full Mirror Resync
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resync \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+## Trade-offs
+
+### Advantages
+
+| Benefit | Description |
+|---------|-------------|
+| Zero read downtime | Original table remains queryable during copy |
+| No empty result sets | Queries always return data (old or new) |
+| Production-safe | Minimal impact on running applications |
+| Atomic cutover | Clean transition with no partial states |
+
+### Disadvantages
+
+| Trade-off | Description |
+|-----------|-------------|
+| 2x disk space | Shadow table doubles storage requirement temporarily |
+| Slower execution | Creating shadow table + indexes + swap overhead |
+| Brief lock during swap | Table briefly locked during rename (typically &lt;100ms) |
+| WAL accumulation | CDC paused during swap, WAL grows on source |
+
+## Performance Considerations
+
+### Disk Space Requirements
+
+Ensure sufficient disk space before swap resync:
+
+```sql
+-- Check table size
+SELECT pg_size_pretty(pg_total_relation_size('public.users'));
+```
+
+You need at least 2x this size available:
+- Original table: 10GB
+- Shadow table during copy: 10GB
+- **Total: 20GB**
+
+After swap completes and old table is dropped, space returns to 10GB.
+
+### Optimizing Swap Speed
+
+**Partition large tables:**
+
+```json
+{
+  "source_table": "public.users",
+  "destination_table": "public.users",
+  "partition_key": "id"
+}
+```
+
+BunnyDB divides the table by `partition_key` and copies partitions in parallel.
+
+**Increase parallel workers:**
+
+```json
+{
+  "snapshot_max_parallel_workers": 16,
+  "snapshot_num_rows_per_partition": 500000
+}
+```
+
+**Disable indexes temporarily (advanced):**
+
+For extremely large tables, consider setting `replicate_indexes: false`, performing the swap, then manually creating indexes afterward.
+
+### Minimizing Lock Duration
+
+The table rename lock is typically very brief, but you can minimize it further:
+
+1. Run resync during low-traffic periods
+2. Ensure no long-running queries hold locks on the table
+3. Monitor active queries before swap:
+
+```sql
+SELECT pid, query, state, query_start
+FROM pg_stat_activity
+WHERE query ILIKE '%users%' AND state = 'active';
+```
+
+## Example: Production Resync
+
+Suppose you have a 50GB `users` table that needs resync:
+
+```bash
+# 1. Check disk space
+psql -h dest_db -d production -c "
+  SELECT pg_size_pretty(pg_total_relation_size('public.users'));
+"
+# Output: 50 GB
+
+# Ensure at least 100 GB free on destination
+
+# 2. Trigger swap resync
+curl -X POST http://localhost:8112/v1/mirrors/prod_to_staging/resync/public.users \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# 3. Monitor progress
+while true; do
+  STATUS=$(curl -s http://localhost:8112/v1/mirrors/prod_to_staging \
+    -H "Authorization: Bearer YOUR_TOKEN" | jq -r '.status')
+
+  echo "$(date): Status = $STATUS"
+
+  if [ "$STATUS" == "RUNNING" ]; then
+    echo "Resync complete!"
+    break
+  fi
+
+  sleep 30
+done
+
+# 4. Verify row count
+psql -h source_db -d production -c "SELECT COUNT(*) FROM public.users;"
+psql -h dest_db -d production -c "SELECT COUNT(*) FROM public.users;"
+```
+
+**Timeline:**
+- **T+0m**: Resync triggered, shadow table created
+- **T+5m**: Copying data (original table still serving reads)
+- **T+40m**: Building indexes on shadow table
+- **T+45m**: Atomic swap (table locked for ~50ms)
+- **T+45m**: CDC resumes, replaying buffered changes
+- **T+46m**: Fully caught up
+
+**Downtime:** &lt;100ms during atomic swap. Application users experience no data unavailability.
+
+## Monitoring Swap Resync
+
+### Check Mirror Status
+
+```bash
+curl -X GET http://localhost:8112/v1/mirrors/prod_to_staging \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**During shadow table copy:**
+
+```json
+{
+  "status": "RESYNCING",
+  "current_phase": "SNAPSHOT"
+}
+```
+
+**During atomic swap:**
+
+```json
+{
+  "status": "RESYNCING",
+  "current_phase": "SWAP"
+}
+```
+
+### Monitor Destination Disk Usage
+
+```bash
+# Check disk space during resync
+psql -h dest_db -d production -c "
+  SELECT schemaname, tablename, pg_size_pretty(pg_total_relation_size(schemaname || '.' || tablename))
+  FROM pg_tables
+  WHERE tablename IN ('users', 'users_resync')
+  ORDER BY tablename;
+"
+```
+
+**Output during resync:**
+
+```
+ schemaname | tablename      | pg_size_pretty
+------------+----------------+----------------
+ public     | users          | 50 GB
+ public     | users_resync   | 48 GB (growing)
+```
+
+### Monitor WAL Accumulation on Source
+
+```sql
+-- On source database
+SELECT slot_name,
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS wal_lag
+FROM pg_replication_slots
+WHERE slot_name = 'bunny_prod_to_staging';
+```
+
+If WAL lag grows too large, source disk may fill. Ensure adequate space.
+
+## Comparison: Truncate vs Swap
+
+| Aspect | Truncate | Swap |
+|--------|----------|------|
+| Read downtime | Minutes to hours | &lt;100ms |
+| Disk space | 1x table size | 2x table size (temporary) |
+| Execution speed | Faster | Slower |
+| Complexity | Simple | Complex (atomic swap) |
+| Production safety | ❌ Not safe | ✅ Production-safe |
+| Use case | Staging, development | Production, critical systems |
+
+## Best Practices
+
+### Always Use Swap for Production
+
+For any system serving user traffic:
+
+```json
+{
+  "resync_strategy": "swap"
+}
+```
+
+### Monitor Disk Space Alerts
+
+Set up alerts for low disk space on destination:
+
+```bash
+# Alert if free space < 20%
+df -h /var/lib/postgresql/data
+```
+
+### Test Swap Timing
+
+Before production resync, test on staging to estimate duration:
+
+```bash
+# Staging test
+time curl -X POST http://localhost:8112/v1/mirrors/staging_mirror/resync/public.users \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+This gives you expected swap duration for production planning.
+
+### Schedule During Low Traffic
+
+Even though swap has minimal downtime, schedule resyncs during low-traffic windows:
+
+- Reduced WAL accumulation
+- Faster swap (fewer active queries)
+- Lower risk of lock contention
+
+## Troubleshooting
+
+### Swap Fails with "Insufficient Disk Space"
+
+**Cause:** Not enough space for shadow table.
+
+**Solution:** Free up space or use truncate strategy for this one-time resync:
+
+```bash
+# Cannot change strategy for existing mirror
+# Must drop and recreate with truncate, or free space
+```
+
+### Swap Hangs During Rename
+
+**Cause:** Long-running query holds lock on table.
+
+**Solution:** Identify and terminate blocking query:
+
+```sql
+-- Find blocking queries
+SELECT pid, query, state, query_start
+FROM pg_stat_activity
+WHERE query ILIKE '%users%' AND state = 'active';
+
+-- Terminate if safe
+SELECT pg_terminate_backend(12345);
+```
+
+Then retry resync.
+
+### Shadow Table Exists After Failed Swap
+
+**Cause:** Swap failed partway through, leaving `users_resync` table.
+
+**Solution:** Manually drop shadow table:
+
+```sql
+DROP TABLE IF EXISTS public.users_resync;
+```
+
+Then retry resync.
+
+## Next Steps
+
+- [Table-Level Resync](/guides/table-level-resync) - Understand resync operations
+- [Creating Your First Mirror](/guides/creating-your-first-mirror) - Configure resync strategy
+- [Pause & Resume](/guides/pause-resume) - Control mirror execution

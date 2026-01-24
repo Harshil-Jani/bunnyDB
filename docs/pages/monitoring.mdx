@@ -1,0 +1,619 @@
+import { Callout, Steps, Tabs } from 'nextra/components'
+
+# Monitoring
+
+Monitor BunnyDB replication health, performance, and operational status. This page covers key metrics, monitoring strategies, and tools for ensuring reliable CDC replication.
+
+## Mirror Status Fields
+
+Use the [GET /v1/mirrors/\{name\}](/api-reference/mirrors#get-mirror-status) endpoint to retrieve detailed mirror status.
+
+### Key Status Fields
+
+| Field | Description | Healthy Value | Unhealthy Indicators |
+|-------|-------------|---------------|---------------------|
+| `status` | Current mirror state | `running` | `error`, `stopped` |
+| `last_lsn` | Last replicated LSN | Advancing regularly | Stuck/not advancing |
+| `last_sync_batch_id` | Last applied batch | Incrementing | Not incrementing |
+| `error_message` | Current error (if any) | `null` | Error description present |
+| `error_count` | Consecutive error count | `0` | > 0 and increasing |
+
+### Mirror Statuses
+
+| Status | Meaning | Action Required |
+|--------|---------|----------------|
+| `initializing` | Mirror being set up | Normal, wait for transition |
+| `snapshotting` | Initial data copy in progress | Monitor progress in logs |
+| `running` | Active CDC replication | None, healthy state |
+| `paused` | Manually paused | Resume when ready |
+| `error` | Error occurred, retrying | Check logs, fix issue |
+| `stopped` | Terminated (permanent) | Investigate and recreate |
+
+### Example: Checking Mirror Status
+
+```bash
+curl http://localhost:8112/v1/mirrors/prod-to-analytics \
+  -H "Authorization: Bearer <token>"
+```
+
+**Healthy Response:**
+```json
+{
+  "name": "prod-to-analytics",
+  "status": "running",
+  "last_lsn": "0/1A2B3C4D",
+  "last_sync_batch_id": 42,
+  "error_message": null,
+  "error_count": 0
+}
+```
+
+**Unhealthy Response:**
+```json
+{
+  "name": "prod-to-analytics",
+  "status": "error",
+  "last_lsn": "0/1A2B3C40",
+  "last_sync_batch_id": 38,
+  "error_message": "pq: connection refused",
+  "error_count": 5
+}
+```
+
+## Table Sync Status
+
+Each mirror includes per-table replication metrics in the `tables` array.
+
+### Table Status Fields
+
+| Field | Description | What to Monitor |
+|-------|-------------|-----------------|
+| `table_name` | Fully qualified table name | Identify which table |
+| `status` | Table sync state | Should be `syncing` |
+| `rows_synced` | Total rows synced during snapshot | Should match source table row count |
+| `rows_inserted` | CDC inserts applied | Should be incrementing |
+| `rows_updated` | CDC updates applied | Should be incrementing |
+| `rows_deleted` | CDC deletes applied | Should be incrementing |
+| `last_synced_at` | Last sync timestamp | Should be recent (< sync interval) |
+
+### Example: Table Status
+
+```json
+{
+  "tables": [
+    {
+      "table_name": "public.users",
+      "status": "syncing",
+      "rows_synced": 150000,
+      "rows_inserted": 1200,
+      "rows_updated": 850,
+      "rows_deleted": 45,
+      "last_synced_at": "2024-01-15T12:30:00Z"
+    }
+  ]
+}
+```
+
+### Calculating Table Freshness
+
+Compare `last_synced_at` with current time:
+
+```bash
+# Get table status
+RESPONSE=$(curl -s http://localhost:8112/v1/mirrors/my-mirror \
+  -H "Authorization: Bearer <token>")
+
+# Extract last_synced_at for a table
+LAST_SYNC=$(echo "$RESPONSE" | jq -r '.tables[] | select(.table_name == "public.users") | .last_synced_at')
+
+# Calculate age in seconds
+CURRENT_TIME=$(date -u +%s)
+LAST_SYNC_TIME=$(date -d "$LAST_SYNC" +%s)
+AGE=$((CURRENT_TIME - LAST_SYNC_TIME))
+
+echo "Table last synced $AGE seconds ago"
+```
+
+## Using the Logs API
+
+Query logs to diagnose issues and track replication activity. See [Logs API](/api-reference/logs) for full details.
+
+### Common Log Queries
+
+#### Recent Activity
+
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?limit=10" \
+  -H "Authorization: Bearer <token>"
+```
+
+#### Error Logs Only
+
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?level=ERROR&limit=50" \
+  -H "Authorization: Bearer <token>"
+```
+
+#### Search for Specific Events
+
+```bash
+# Search for snapshot completion
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?search=snapshot+completed" \
+  -H "Authorization: Bearer <token>"
+
+# Search for batch application
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?search=batch+applied" \
+  -H "Authorization: Bearer <token>"
+```
+
+#### Track CDC Throughput
+
+Extract batch statistics from logs:
+
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?search=batch+applied&limit=100" \
+  -H "Authorization: Bearer <token>" | jq -r '
+    .logs[] |
+    select(.message | contains("batch applied")) |
+    "\(.created_at) | Batch \(.details.batch_id): \(.details.rows_processed) rows in \(.details.duration_ms)ms"
+  '
+```
+
+### Log Monitoring Automation
+
+Set up a cron job or systemd timer to check for errors:
+
+```bash
+#!/bin/bash
+# /usr/local/bin/bunny-error-check.sh
+
+API_URL="http://localhost:8112"
+TOKEN="<your-token>"
+MIRROR="prod-to-analytics"
+
+# Get recent error logs
+ERRORS=$(curl -s "$API_URL/v1/mirrors/$MIRROR/logs?level=ERROR&limit=10" \
+  -H "Authorization: Bearer $TOKEN" | jq -r '.total')
+
+if [ "$ERRORS" -gt 0 ]; then
+  echo "WARNING: $ERRORS error logs found for mirror $MIRROR"
+  # Send alert (email, Slack, PagerDuty, etc.)
+  # ./send-alert.sh "BunnyDB: $ERRORS errors on $MIRROR"
+  exit 1
+else
+  echo "OK: No errors for mirror $MIRROR"
+  exit 0
+fi
+```
+
+## Temporal UI
+
+BunnyDB uses Temporal for workflow orchestration. Access the Temporal UI to inspect workflow execution details.
+
+### Accessing Temporal UI
+
+The Temporal UI runs on port 8085 by default:
+
+```
+http://localhost:8085
+```
+
+### What to Monitor in Temporal UI
+
+1. **Workflow Status**
+   - Navigate to "Workflows"
+   - Search for your mirror name
+   - Check workflow status (Running, Completed, Failed)
+
+2. **Workflow History**
+   - Click on a workflow execution
+   - Review event history
+   - Identify which activity failed
+
+3. **Activity Execution**
+   - View activity duration
+   - Check activity inputs/outputs
+   - Identify performance bottlenecks
+
+4. **Task Queue**
+   - Verify workers are polling the task queue
+   - Check for task queue backlog
+   - Monitor worker health
+
+### Example: Finding Failed Workflows
+
+<Steps>
+
+### Open Temporal UI
+Navigate to http://localhost:8085
+
+### Go to Workflows
+Click "Workflows" in the left sidebar
+
+### Filter by Status
+Select "Failed" or "Terminated" status
+
+### Search for Mirror
+Enter your mirror name in the search box
+
+### Inspect Failure
+Click on the failed workflow to see error details
+
+</Steps>
+
+<Callout type="info">
+Temporal UI provides much more detailed information than the BunnyDB API logs, including activity retries, timeouts, and workflow state transitions.
+</Callout>
+
+## Docker Logs
+
+View worker process logs directly from Docker:
+
+### Follow Worker Logs
+
+```bash
+docker compose logs -f bunny-worker
+```
+
+### View Recent Logs
+
+```bash
+docker compose logs --tail=100 bunny-worker
+```
+
+### Search Logs
+
+```bash
+docker compose logs bunny-worker | grep ERROR
+```
+
+### Multiple Containers
+
+If running multiple workers:
+
+```bash
+docker compose logs -f bunny-worker-1 bunny-worker-2
+```
+
+### Save Logs to File
+
+```bash
+docker compose logs bunny-worker > worker-logs.txt
+```
+
+<Callout type="info">
+Docker logs complement the BunnyDB logs API. Use Docker logs for low-level debugging and the API logs for structured querying.
+</Callout>
+
+## Key Metrics to Watch
+
+### 1. Replication Lag
+
+**Definition**: Time/distance between source database current position and last replicated position.
+
+**Measured by**: LSN difference or time since last sync
+
+**Check LSN lag on source database:**
+
+```sql
+-- Get current LSN
+SELECT pg_current_wal_lsn();
+
+-- Get replication slot lag
+SELECT
+  slot_name,
+  confirmed_flush_lsn,
+  pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) AS lag_bytes,
+  pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)) AS lag_pretty
+FROM pg_replication_slots
+WHERE slot_name = 'bunny_slot_my_mirror';
+```
+
+**Healthy values**:
+- Lag < 10MB: Excellent
+- Lag 10-100MB: Normal
+- Lag > 100MB: Investigate
+
+**Common causes of high lag**:
+- Destination database slow (CPU, I/O)
+- Network issues
+- Large batch size with slow transactions
+- Worker process overwhelmed
+
+### 2. Batch Throughput
+
+**Definition**: Number of changes replicated per unit time.
+
+**Measured by**: `rows_processed` from logs divided by batch interval
+
+**Calculate throughput:**
+
+```bash
+# Get recent batch logs
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?search=batch+applied&limit=10" \
+  -H "Authorization: Bearer <token>" | jq -r '
+    .logs[] |
+    select(.message | contains("batch applied")) |
+    .details.rows_processed
+  ' | awk '{sum+=$1; count++} END {print "Avg rows/batch:", sum/count}'
+```
+
+**Healthy values**:
+- Low traffic: 10-100 changes/batch
+- Medium traffic: 100-1000 changes/batch
+- High traffic: 1000+ changes/batch
+
+**Optimize for higher throughput**:
+- Increase `cdc_batch_size`
+- Decrease `cdc_sync_interval_seconds`
+- Scale worker resources (CPU, RAM)
+
+### 3. Error Count
+
+**Definition**: Number of consecutive errors before successful operation.
+
+**Measured by**: `error_count` field in mirror status
+
+**Check error count:**
+
+```bash
+curl http://localhost:8112/v1/mirrors/my-mirror \
+  -H "Authorization: Bearer <token>" | jq -r '.error_count'
+```
+
+**Healthy values**:
+- 0: Healthy
+- 1-3: Transient issues (network blip, temp lock)
+- 4+: Persistent problem requiring intervention
+
+**BunnyDB retry behavior**:
+- Exponential backoff on errors
+- Automatic retry after backoff period
+- Manual retry available via [retry endpoint](/api-reference/mirror-control#retry-mirror)
+
+### 4. Last Sync Timestamp
+
+**Definition**: Time since last successful sync operation.
+
+**Measured by**: `last_synced_at` per table or log timestamps
+
+**Calculate staleness:**
+
+```bash
+curl http://localhost:8112/v1/mirrors/my-mirror \
+  -H "Authorization: Bearer <token>" | jq -r '
+    .tables[] |
+    "\(.table_name): \(.last_synced_at)"
+  '
+```
+
+**Healthy values**:
+- Age < `cdc_sync_interval_seconds`: Healthy
+- Age = `cdc_sync_interval_seconds` + tolerance: Normal
+- Age > 2x `cdc_sync_interval_seconds`: Problem
+
+**Common causes of stale timestamps**:
+- Mirror paused
+- Error state (check `error_message`)
+- Worker process stopped
+- Temporal workflow terminated
+
+### 5. Replication Slot Disk Usage
+
+**Definition**: WAL disk space consumed by replication slot on source.
+
+**Measured by**: PostgreSQL system catalogs
+
+**Check slot disk usage:**
+
+```sql
+SELECT
+  slot_name,
+  active,
+  pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained_wal
+FROM pg_replication_slots
+WHERE slot_name LIKE 'bunny_%';
+```
+
+**Healthy values**:
+- < 100MB: Excellent
+- 100MB - 1GB: Normal
+- > 1GB: Investigate
+
+**High retention causes**:
+- Paused mirror (slot not advancing)
+- Stopped worker (slot inactive)
+- Very high transaction rate with slow replication
+
+**Recovery**:
+- Resume paused mirrors
+- Restart failed mirrors
+- Delete unused mirrors to drop slots
+
+<Callout type="error">
+**Critical**: Excessive WAL retention can fill up the source database disk. Monitor slot usage closely and delete abandoned mirrors promptly.
+</Callout>
+
+## Health Endpoint for Load Balancers
+
+Use the [/health endpoint](/api-reference/health) for basic availability checks:
+
+```bash
+curl http://localhost:8112/health
+```
+
+**Response:**
+```json
+{
+  "status": "ok"
+}
+```
+
+This only checks if the API is running. For comprehensive health, also check:
+
+1. Authentication works
+2. Mirrors are in healthy status
+3. Recent logs show activity
+
+**Comprehensive health check script:**
+
+```bash
+#!/bin/bash
+# comprehensive-health.sh
+
+API_URL="http://localhost:8112"
+TOKEN="<your-token>"
+
+# Check 1: API health
+if ! curl -f -s "$API_URL/health" > /dev/null; then
+  echo "CRITICAL: API health check failed"
+  exit 2
+fi
+
+# Check 2: Authentication
+if ! curl -f -s "$API_URL/v1/auth/me" -H "Authorization: Bearer $TOKEN" > /dev/null; then
+  echo "CRITICAL: Authentication failed"
+  exit 2
+fi
+
+# Check 3: Mirror status
+MIRRORS=$(curl -f -s "$API_URL/v1/mirrors" -H "Authorization: Bearer $TOKEN")
+ERROR_MIRRORS=$(echo "$MIRRORS" | jq '[.[] | select(.status == "error")] | length')
+STOPPED_MIRRORS=$(echo "$MIRRORS" | jq '[.[] | select(.status == "stopped")] | length')
+
+if [ "$ERROR_MIRRORS" -gt 0 ]; then
+  echo "WARNING: $ERROR_MIRRORS mirror(s) in error state"
+  exit 1
+fi
+
+if [ "$STOPPED_MIRRORS" -gt 0 ]; then
+  echo "CRITICAL: $STOPPED_MIRRORS mirror(s) stopped"
+  exit 2
+fi
+
+echo "OK: All health checks passed"
+exit 0
+```
+
+## Prometheus Monitoring Example
+
+Export BunnyDB metrics to Prometheus for alerting and graphing:
+
+```python
+#!/usr/bin/env python3
+# bunny-exporter.py - Prometheus exporter for BunnyDB
+
+import requests
+import time
+from prometheus_client import start_http_server, Gauge
+
+API_URL = "http://localhost:8112"
+TOKEN = "your-token-here"
+
+# Define metrics
+mirror_status = Gauge('bunnydb_mirror_status', 'Mirror status (1=running, 0=other)', ['mirror'])
+mirror_error_count = Gauge('bunnydb_mirror_error_count', 'Mirror error count', ['mirror'])
+mirror_batch_id = Gauge('bunnydb_mirror_batch_id', 'Last batch ID', ['mirror'])
+mirror_table_rows = Gauge('bunnydb_mirror_table_rows', 'Row counts per table', ['mirror', 'table', 'operation'])
+
+def collect_metrics():
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+
+    # Get all mirrors
+    mirrors = requests.get(f"{API_URL}/v1/mirrors", headers=headers).json()
+
+    for mirror in mirrors:
+        name = mirror['name']
+
+        # Get detailed status
+        status = requests.get(f"{API_URL}/v1/mirrors/{name}", headers=headers).json()
+
+        # Set metrics
+        mirror_status.labels(mirror=name).set(1 if status['status'] == 'running' else 0)
+        mirror_error_count.labels(mirror=name).set(status.get('error_count', 0))
+        mirror_batch_id.labels(mirror=name).set(status.get('last_sync_batch_id', 0))
+
+        # Per-table metrics
+        for table in status.get('tables', []):
+            table_name = table['table_name']
+            mirror_table_rows.labels(mirror=name, table=table_name, operation='inserted').set(
+                table.get('rows_inserted', 0)
+            )
+            mirror_table_rows.labels(mirror=name, table=table_name, operation='updated').set(
+                table.get('rows_updated', 0)
+            )
+            mirror_table_rows.labels(mirror=name, table=table_name, operation='deleted').set(
+                table.get('rows_deleted', 0)
+            )
+
+if __name__ == '__main__':
+    start_http_server(9090)
+    print("BunnyDB Prometheus exporter listening on :9090")
+
+    while True:
+        collect_metrics()
+        time.sleep(15)  # Scrape every 15 seconds
+```
+
+**Run the exporter:**
+```bash
+pip install prometheus-client requests
+python3 bunny-exporter.py
+```
+
+**Add to Prometheus config:**
+```yaml
+scrape_configs:
+  - job_name: 'bunnydb'
+    static_configs:
+      - targets: ['localhost:9090']
+```
+
+## Alerting Rules
+
+Set up alerts for common issues:
+
+### Prometheus Alert Rules
+
+```yaml
+groups:
+  - name: bunnydb
+    interval: 30s
+    rules:
+      - alert: BunnyDBMirrorDown
+        expr: bunnydb_mirror_status == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "BunnyDB mirror {{ $labels.mirror }} is not running"
+
+      - alert: BunnyDBHighErrorCount
+        expr: bunnydb_mirror_error_count > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "BunnyDB mirror {{ $labels.mirror }} has {{ $value }} consecutive errors"
+
+      - alert: BunnyDBStaleMirror
+        expr: time() - bunnydb_mirror_last_sync > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "BunnyDB mirror {{ $labels.mirror }} hasn't synced in 10+ minutes"
+```
+
+## Best Practices
+
+1. **Monitor multiple layers**: API health, mirror status, table status, logs
+2. **Set up alerts**: Don't rely on manual checks
+3. **Track trends**: Graph metrics over time to identify degradation
+4. **Correlate with source**: Compare BunnyDB metrics with source DB metrics
+5. **Regular audits**: Periodically review all mirrors for health
+6. **Document baselines**: Know what "normal" looks like for your workload
+
+<Callout type="info">
+Combine BunnyDB monitoring with your existing database and infrastructure monitoring for a complete picture of replication health.
+</Callout>

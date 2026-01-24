@@ -1,0 +1,193 @@
+import { Callout } from 'nextra/components'
+
+# Setting Up Peers
+
+A **peer** in BunnyDB represents a PostgreSQL database connection. Every mirror requires two peers:
+- A **source peer**: the database you want to replicate from
+- A **destination peer**: the database you want to replicate to
+
+## Source Database Requirements
+
+Before creating a source peer, ensure your PostgreSQL instance is configured for logical replication:
+
+```sql
+-- Check current settings
+SHOW wal_level;
+SHOW max_replication_slots;
+SHOW max_wal_senders;
+```
+
+Your source database must have:
+
+| Parameter | Required Value | Purpose |
+|-----------|----------------|---------|
+| `wal_level` | `logical` | Enables logical decoding of WAL |
+| `max_replication_slots` | `>= 4` | Allows multiple mirrors |
+| `max_wal_senders` | `>= 4` | Supports concurrent replication streams |
+
+To update these settings, modify `postgresql.conf`:
+
+```conf
+wal_level = logical
+max_replication_slots = 10
+max_wal_senders = 10
+```
+
+<Callout type="warning">
+After changing these parameters, you must **restart PostgreSQL** for them to take effect.
+</Callout>
+
+## Creating a Peer
+
+Create a peer using the REST API:
+
+```bash
+curl -X POST http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "source_db",
+    "host": "postgres-source",
+    "port": 5432,
+    "user": "postgres",
+    "password": "postgres",
+    "database": "production",
+    "ssl_mode": "disable"
+  }'
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Unique identifier for this peer |
+| `host` | string | Yes | PostgreSQL hostname or IP |
+| `port` | number | Yes | PostgreSQL port (default: 5432) |
+| `user` | string | Yes | Database user with replication privileges |
+| `password` | string | Yes | User password |
+| `database` | string | Yes | Database name to connect to |
+| `ssl_mode` | string | Yes | SSL mode: `disable`, `require`, `verify-ca`, or `verify-full` |
+
+### Response
+
+```json
+{
+  "message": "Peer 'source_db' created successfully"
+}
+```
+
+## Testing a Peer Connection
+
+After creating a peer, verify the connection works:
+
+```bash
+curl -X POST http://localhost:8112/v1/peers/source_db/test \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Successful Response
+
+```json
+{
+  "success": true,
+  "version": "PostgreSQL 15.3 on x86_64-pc-linux-gnu"
+}
+```
+
+<Callout type="error">
+If the test fails, verify network connectivity, credentials, and that the peer configuration is correct. Check the BunnyDB logs for detailed error messages.
+</Callout>
+
+## Listing Available Tables
+
+Once a peer is configured, list all available tables:
+
+```bash
+curl -X GET http://localhost:8112/v1/peers/source_db/tables \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Response
+
+```json
+[
+  {
+    "schema": "public",
+    "table_name": "users"
+  },
+  {
+    "schema": "public",
+    "table_name": "orders"
+  },
+  {
+    "schema": "analytics",
+    "table_name": "events"
+  }
+]
+```
+
+This list shows all tables you can include in a mirror's table mappings.
+
+## Best Practices
+
+### Use Internal Hostnames in Docker
+
+When running BunnyDB in Docker Compose, use service names as hostnames:
+
+```yaml
+services:
+  source-db:
+    image: postgres:15
+    # ...
+
+  bunny:
+    image: bunnydb/bunny
+    # ...
+```
+
+Reference the source as `host: "source-db"` instead of `localhost`.
+
+### Enable SSL for Production
+
+For production deployments, always use SSL:
+
+```json
+{
+  "ssl_mode": "require"
+}
+```
+
+For mutual TLS with certificate verification:
+
+```json
+{
+  "ssl_mode": "verify-full"
+}
+```
+
+<Callout type="info">
+BunnyDB currently loads SSL certificates from the standard PostgreSQL client locations. Ensure your container has access to the required CA certificates.
+</Callout>
+
+### Grant Appropriate Permissions
+
+The source peer user needs specific privileges:
+
+```sql
+-- For source database
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO replication_user;
+GRANT USAGE ON SCHEMA public TO replication_user;
+ALTER USER replication_user WITH REPLICATION;
+```
+
+The destination peer user needs write access:
+
+```sql
+-- For destination database
+GRANT ALL PRIVILEGES ON SCHEMA public TO destination_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO destination_user;
+```
+
+## Next Steps
+
+Now that you have peers configured, you're ready to [create your first mirror](/guides/creating-your-first-mirror).

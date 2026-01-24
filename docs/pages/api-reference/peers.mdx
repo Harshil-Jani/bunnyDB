@@ -1,0 +1,452 @@
+import { Callout, Tabs } from 'nextra/components'
+
+# Peers
+
+Database peers represent PostgreSQL instances that can act as sources or destinations for replication mirrors. Before creating a mirror, you must configure both source and destination peers.
+
+## List Peers
+
+Retrieve all configured database peers.
+
+### Endpoint
+
+```
+GET /v1/peers
+```
+
+**Permission**: `authed` (any authenticated user)
+
+### Response
+
+Returns an array of peer objects with connection details.
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+[
+  {
+    "name": "production-db",
+    "host": "prod-postgres.example.com",
+    "port": 5432,
+    "user": "replication_user",
+    "database": "production",
+    "ssl_mode": "require"
+  },
+  {
+    "name": "analytics-db",
+    "host": "analytics.example.com",
+    "port": 5432,
+    "user": "postgres",
+    "database": "analytics",
+    "ssl_mode": "prefer"
+  }
+]
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+Passwords are never returned in API responses for security reasons.
+</Callout>
+
+## Create Peer
+
+Add a new database peer configuration.
+
+### Endpoint
+
+```
+POST /v1/peers
+```
+
+**Permission**: `adminOnly`
+
+### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique identifier for this peer |
+| `host` | string | Yes | Database hostname or IP address |
+| `port` | number | Yes | PostgreSQL port (typically 5432) |
+| `user` | string | Yes | Database username |
+| `password` | string | Yes | Database password |
+| `database` | string | Yes | Database name |
+| `ssl_mode` | string | No | SSL mode: `disable`, `require`, `verify-ca`, `verify-full`, or `prefer` (default: `prefer`) |
+
+### Response
+
+Returns the created peer object (without password).
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "production-db",
+    "host": "prod-postgres.example.com",
+    "port": 5432,
+    "user": "replication_user",
+    "password": "secure-password",
+    "database": "production",
+    "ssl_mode": "require"
+  }'
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "name": "production-db",
+  "host": "prod-postgres.example.com",
+  "port": 5432,
+  "user": "replication_user",
+  "database": "production",
+  "ssl_mode": "require"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="warning">
+**Source Database Requirements**: For peers used as replication sources, ensure PostgreSQL is configured with `wal_level=logical` and has sufficient `max_replication_slots` and `max_wal_senders`. See [Configuration](/configuration) for details.
+</Callout>
+
+### Error Responses
+
+| Status Code | Error | Description |
+|-------------|-------|-------------|
+| 400 | Bad Request | Missing required fields or invalid values |
+| 401 | Unauthorized | Missing or invalid token |
+| 403 | Forbidden | User does not have admin role |
+| 409 | Conflict | Peer name already exists |
+
+## Get Peer
+
+Retrieve details for a specific peer.
+
+### Endpoint
+
+```
+GET /v1/peers/{name}
+```
+
+**Permission**: `authed` (any authenticated user)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique peer name |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/v1/peers/production-db \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "name": "production-db",
+  "host": "prod-postgres.example.com",
+  "port": 5432,
+  "user": "replication_user",
+  "database": "production",
+  "ssl_mode": "require"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+## Update Peer
+
+Modify an existing peer's configuration.
+
+### Endpoint
+
+```
+PUT /v1/peers/{name}
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique peer name |
+
+### Request Body
+
+Provide any fields you want to update. All fields are optional:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `host` | string | Database hostname or IP address |
+| `port` | number | PostgreSQL port |
+| `user` | string | Database username |
+| `password` | string | Database password |
+| `database` | string | Database name |
+| `ssl_mode` | string | SSL mode |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X PUT http://localhost:8112/v1/peers/production-db \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "host": "prod-postgres-new.example.com",
+    "password": "new-password"
+  }'
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "name": "production-db",
+  "host": "prod-postgres-new.example.com",
+  "port": 5432,
+  "user": "replication_user",
+  "database": "production",
+  "ssl_mode": "require"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="warning">
+**Active Mirrors**: Updating a peer that is actively used by a mirror may cause connection errors. Consider pausing mirrors before updating peer credentials.
+</Callout>
+
+## Delete Peer
+
+Remove a peer configuration.
+
+### Endpoint
+
+```
+DELETE /v1/peers/{name}
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique peer name |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl -X DELETE http://localhost:8112/v1/peers/production-db \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "deleted": "production-db"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="error">
+**Cannot Delete Active Peers**: You cannot delete a peer that is currently used by an active mirror. Delete the mirror first, or the API will return an error.
+</Callout>
+
+## List Tables
+
+Retrieve all tables in a peer database.
+
+### Endpoint
+
+```
+GET /v1/peers/{name}/tables
+```
+
+**Permission**: `authed` (any authenticated user)
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique peer name |
+
+### Response
+
+Returns an array of table objects:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema` | string | Schema name (e.g., `public`) |
+| `table_name` | string | Table name |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/v1/peers/production-db/tables \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+[
+  {
+    "schema": "public",
+    "table_name": "users"
+  },
+  {
+    "schema": "public",
+    "table_name": "orders"
+  },
+  {
+    "schema": "analytics",
+    "table_name": "events"
+  }
+]
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+This endpoint is useful for discovering which tables are available before creating a mirror or adding tables to an existing mirror.
+</Callout>
+
+## Test Connection
+
+Test connectivity to a peer database and retrieve its PostgreSQL version.
+
+### Endpoint
+
+```
+POST /v1/peers/{name}/test
+```
+
+**Permission**: `adminOnly`
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | string | Unique peer name |
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | boolean | Whether the connection succeeded |
+| `version` | string | PostgreSQL version string (if successful) |
+
+### Example
+
+<Tabs items={['Request', 'Success Response', 'Failure Response']}>
+<Tabs.Tab>
+```bash
+curl -X POST http://localhost:8112/v1/peers/production-db/test \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "success": true,
+  "version": "PostgreSQL 14.5 (Debian 14.5-1.pgdg110+1) on x86_64-pc-linux-gnu"
+}
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "success": false,
+  "error": "connection refused"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+Use this endpoint after creating or updating a peer to verify that BunnyDB can connect successfully before creating mirrors.
+</Callout>
+
+## SSL Modes
+
+PostgreSQL supports several SSL modes for encrypted connections:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `disable` | No SSL | Development only, insecure |
+| `prefer` | Use SSL if available, fall back to plain | Default, flexible |
+| `require` | Require SSL connection | Production with SSL |
+| `verify-ca` | Require SSL and verify CA certificate | High security |
+| `verify-full` | Require SSL and verify hostname | Maximum security |
+
+<Callout type="warning">
+**Production Recommendation**: Use `require`, `verify-ca`, or `verify-full` for production databases to ensure encrypted connections.
+</Callout>
+
+## Common Workflows
+
+### Adding a Source Database
+
+```bash
+# Create the peer
+curl -X POST http://localhost:8112/v1/peers \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "source-db",
+    "host": "source.example.com",
+    "port": 5432,
+    "user": "replication_user",
+    "password": "password",
+    "database": "production",
+    "ssl_mode": "require"
+  }'
+
+# Test connectivity
+curl -X POST http://localhost:8112/v1/peers/source-db/test \
+  -H "Authorization: Bearer <token>"
+
+# List available tables
+curl http://localhost:8112/v1/peers/source-db/tables \
+  -H "Authorization: Bearer <token>"
+```
+
+### Rotating Database Credentials
+
+```bash
+# Update the peer with new credentials
+curl -X PUT http://localhost:8112/v1/peers/source-db \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "password": "new-password"
+  }'
+
+# Test the new credentials
+curl -X POST http://localhost:8112/v1/peers/source-db/test \
+  -H "Authorization: Bearer <token>"
+```

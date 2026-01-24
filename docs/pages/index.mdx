@@ -1,0 +1,126 @@
+import { Callout } from 'nextra/components'
+
+# BunnyDB
+
+**Fast, focused PostgreSQL-to-PostgreSQL CDC replication**
+
+BunnyDB is a specialized change data capture (CDC) replication tool designed exclusively for PostgreSQL-to-PostgreSQL workloads. Built on top of PostgreSQL's native logical replication using WAL (Write-Ahead Logging), BunnyDB provides real-time, reliable data synchronization with advanced features that go beyond generic CDC solutions.
+
+## What is BunnyDB?
+
+BunnyDB uses PostgreSQL's logical replication protocol to continuously stream changes from a source database to a destination database. It leverages the `pgoutput` plugin to decode WAL records and efficiently applies them to the target database, maintaining consistency and minimizing latency.
+
+Unlike general-purpose CDC tools that support multiple database engines, BunnyDB is purpose-built for PostgreSQL, allowing us to implement features that deeply integrate with PostgreSQL's architecture.
+
+## Key Features
+
+### Schema Replication (DDL Sync)
+Automatically detect and replicate schema changes from source to destination, including:
+- Column additions, deletions, and type changes
+- Default value modifications
+- Table-level DDL operations
+
+<Callout type="info">
+Schema changes can be applied on-demand via the `SyncSchema` signal, giving you full control over when DDL modifications are replicated.
+</Callout>
+
+### Index Replication
+BunnyDB automatically replicates all PostgreSQL index types to maintain query performance:
+- B-tree, Hash, GIN, GiST, SP-GiST, BRIN
+- Unique constraints
+- Partial indexes
+- Expression indexes
+
+Indexes are rebuilt during initial snapshot and updated during table resyncs.
+
+### Foreign Key Handling
+Intelligent foreign key management ensures referential integrity:
+- **Initial Snapshot**: Foreign keys are dropped before data copy and recreated afterward
+- **CDC Phase**: Uses `DEFERRABLE INITIALLY DEFERRED` constraints for batch consistency
+- **Validation**: Foreign keys are validated when recreated to ensure data integrity
+
+This deferred strategy allows BunnyDB to apply batches of changes without violating FK constraints due to ordering issues.
+
+### Table-Level Resync
+Resynchronize individual tables without disrupting the entire mirror. Useful when:
+- A specific table has data drift
+- You want to backfill historical data for a single table
+- Schema changes require re-copying a table
+
+<Callout type="info">
+Table resyncs run in the background while CDC continues for other tables, minimizing disruption.
+</Callout>
+
+### Zero-Downtime Swap Resync
+BunnyDB offers two resync strategies:
+
+**Truncate Strategy** (simpler, has downtime):
+1. Drop foreign keys
+2. Truncate destination table
+3. Copy data from source
+4. Rebuild indexes
+5. Recreate foreign keys
+
+**Swap Strategy** (zero-downtime):
+1. Create shadow `_resync` table
+2. Copy data to shadow table
+3. Build indexes on shadow table
+4. Atomically rename tables
+5. Drop old table
+
+The swap strategy ensures queries continue running during resync, making it ideal for production environments.
+
+### Pause/Resume Without Data Loss
+Pause replication during maintenance windows or high-load periods:
+- Replication slot retains WAL position
+- No data loss when resuming
+- Clean state transitions with workflow signals
+
+<Callout type="warning">
+While paused, WAL accumulates on the source database. Ensure sufficient disk space and resume before reaching `wal_keep_size` limits.
+</Callout>
+
+### On-Demand Retry
+Bypass Temporal's exponential backoff to immediately retry failed workflows:
+- Useful for transient network errors
+- Bypasses built-in retry delays
+- Provides immediate feedback on error resolution
+
+The `RetryNow` signal allows operators to manually trigger retries without waiting for Temporal's backoff schedule.
+
+### Role-Based Access Control (RBAC)
+Built-in authentication with two roles:
+- **Admin**: Full control over mirrors, peers, and system operations
+- **Readonly**: View-only access to mirrors, logs, and metrics
+
+JWT-based authentication secures all API endpoints.
+
+## Use Cases
+
+BunnyDB is ideal for:
+
+- **Cross-region replication** for disaster recovery and geo-distribution
+- **Read replica creation** for analytics and reporting workloads
+- **Database migrations** with minimal downtime
+- **Multi-tenant data isolation** replicating specific tables to tenant databases
+- **Development/staging environments** keeping non-production databases in sync
+
+## Architecture Overview
+
+BunnyDB is built on three core components:
+
+1. **bunny-api**: REST API for managing peers, mirrors, and operations
+2. **bunny-worker**: Temporal worker executing CDC workflows and activities
+3. **Temporal**: Workflow orchestration engine ensuring reliability and fault tolerance
+
+All state is stored in a PostgreSQL catalog database, and workflow execution history is managed by Temporal.
+
+<Callout>
+Learn more about BunnyDB's architecture in the [Architecture](/architecture) guide.
+</Callout>
+
+## Get Started
+
+Ready to set up your first mirror? Follow our [Quickstart](/quickstart) guide to have BunnyDB running in under 5 minutes.
+
+For detailed explanations of BunnyDB's core concepts, see the [Concepts](/concepts) page.

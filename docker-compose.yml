@@ -127,6 +127,15 @@ services:
     depends_on:
       - bunny-api
 
+  bunny-docs:
+    container_name: bunny-docs
+    build:
+      context: ./docs
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - 3001:3001
+
   # Test databases for sanity testing
   source-db:
     container_name: bunny-source-db

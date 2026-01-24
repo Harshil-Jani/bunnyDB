@@ -1,0 +1,334 @@
+import { Callout, Tabs } from 'nextra/components'
+
+# Health
+
+The health check endpoint provides a simple way to verify that the BunnyDB API is running and responsive.
+
+## Health Check
+
+Verify that the BunnyDB API server is operational.
+
+### Endpoint
+
+```
+GET /health
+```
+
+**Permission**: `open` (no authentication required)
+
+### Response
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | Health status (always `"ok"` if the API is running) |
+
+### Example
+
+<Tabs items={['Request', 'Response']}>
+<Tabs.Tab>
+```bash
+curl http://localhost:8112/health
+```
+</Tabs.Tab>
+<Tabs.Tab>
+```json
+{
+  "status": "ok"
+}
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="info">
+This endpoint returns HTTP 200 with `{"status": "ok"}` when the API is healthy. If the API is down, the request will fail to connect or timeout.
+</Callout>
+
+## Use Cases
+
+### Docker Health Checks
+
+Use the health endpoint in Docker Compose health checks:
+
+```yaml
+services:
+  bunny-api:
+    image: bunnydb/api:latest
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8112/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+This ensures Docker can detect when the API container is unhealthy and restart it if needed.
+
+### Kubernetes Liveness Probe
+
+Configure a liveness probe for Kubernetes deployments:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bunnydb-api
+spec:
+  containers:
+  - name: api
+    image: bunnydb/api:latest
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8112
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+```
+
+### Kubernetes Readiness Probe
+
+Configure a readiness probe to know when the API is ready to accept traffic:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bunnydb-api
+spec:
+  containers:
+  - name: api
+    image: bunnydb/api:latest
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8112
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+```
+
+### Load Balancer Health Checks
+
+Configure load balancers (AWS ELB, Nginx, HAProxy, etc.) to monitor API availability:
+
+#### AWS Application Load Balancer
+
+```json
+{
+  "HealthCheckEnabled": true,
+  "HealthCheckPath": "/health",
+  "HealthCheckProtocol": "HTTP",
+  "HealthCheckPort": "8112",
+  "HealthCheckIntervalSeconds": 30,
+  "HealthCheckTimeoutSeconds": 5,
+  "HealthyThresholdCount": 2,
+  "UnhealthyThresholdCount": 3
+}
+```
+
+#### Nginx Upstream Health Check
+
+```nginx
+upstream bunnydb_api {
+    server bunnydb-api-1:8112;
+    server bunnydb-api-2:8112;
+}
+
+server {
+    location / {
+        proxy_pass http://bunnydb_api;
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+    }
+
+    location /health {
+        access_log off;
+        proxy_pass http://bunnydb_api/health;
+    }
+}
+```
+
+### Monitoring and Alerting
+
+Poll the health endpoint from monitoring systems to detect API outages:
+
+#### Prometheus Blackbox Exporter
+
+```yaml
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_status_codes: [200]
+      method: GET
+      preferred_ip_protocol: "ip4"
+```
+
+#### Simple Shell Script
+
+```bash
+#!/bin/bash
+# health-check.sh - Monitor BunnyDB API health
+
+HEALTH_URL="http://localhost:8112/health"
+MAX_RETRIES=3
+RETRY_DELAY=5
+
+for i in $(seq 1 $MAX_RETRIES); do
+  if curl -f -s "$HEALTH_URL" > /dev/null; then
+    echo "✓ BunnyDB API is healthy"
+    exit 0
+  else
+    echo "✗ Health check failed (attempt $i/$MAX_RETRIES)"
+    sleep $RETRY_DELAY
+  fi
+done
+
+echo "✗ BunnyDB API is unhealthy after $MAX_RETRIES attempts"
+exit 1
+```
+
+### CI/CD Deployment Verification
+
+Verify the API is ready after deployment:
+
+```bash
+#!/bin/bash
+# wait-for-api.sh - Wait for BunnyDB API to become healthy
+
+HEALTH_URL="http://localhost:8112/health"
+TIMEOUT=300  # 5 minutes
+INTERVAL=5
+ELAPSED=0
+
+echo "Waiting for BunnyDB API to become healthy..."
+
+while [ $ELAPSED -lt $TIMEOUT ]; do
+  if curl -f -s "$HEALTH_URL" > /dev/null 2>&1; then
+    echo "✓ API is healthy after ${ELAPSED}s"
+    exit 0
+  fi
+
+  echo "  Waiting... (${ELAPSED}s elapsed)"
+  sleep $INTERVAL
+  ELAPSED=$((ELAPSED + INTERVAL))
+done
+
+echo "✗ API failed to become healthy within ${TIMEOUT}s"
+exit 1
+```
+
+Use in CI/CD pipelines:
+
+```yaml
+# .github/workflows/deploy.yml
+steps:
+  - name: Deploy API
+    run: docker-compose up -d bunny-api
+
+  - name: Wait for API health
+    run: ./scripts/wait-for-api.sh
+
+  - name: Run integration tests
+    run: npm run test:integration
+```
+
+## What the Health Check Does NOT Cover
+
+The health endpoint only verifies that the API HTTP server is running and can respond to requests. It does **not** check:
+
+- Database connectivity (catalog, peers)
+- Temporal workflow service connectivity
+- Worker process status
+- Mirror replication health
+- Disk space or system resources
+
+<Callout type="warning">
+**Limited Scope**: The health endpoint is a basic availability check. For comprehensive monitoring of replication health, use the [mirror status](/api-reference/mirrors#get-mirror-status) and [logs](/api-reference/logs) endpoints.
+</Callout>
+
+## Comprehensive Health Monitoring
+
+For production deployments, implement multi-layer health checks:
+
+### Layer 1: API Health
+
+```bash
+curl http://localhost:8112/health
+```
+
+Verifies the API server is responsive.
+
+### Layer 2: Authentication
+
+```bash
+curl http://localhost:8112/v1/auth/me \
+  -H "Authorization: Bearer <token>"
+```
+
+Verifies the API can authenticate requests and access the catalog database.
+
+### Layer 3: Mirror Status
+
+```bash
+curl http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer <token>"
+```
+
+Verifies the API can query mirror status and that mirrors are running.
+
+### Layer 4: Recent Activity
+
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?limit=5" \
+  -H "Authorization: Bearer <token>"
+```
+
+Verifies mirrors are actively replicating by checking for recent logs.
+
+### Example Comprehensive Health Script
+
+```bash
+#!/bin/bash
+# comprehensive-health.sh
+
+set -e
+
+API_URL="http://localhost:8112"
+TOKEN="<your-token>"
+
+# Layer 1: Basic health
+echo "Checking API health..."
+curl -f -s "$API_URL/health" > /dev/null
+
+# Layer 2: Authentication
+echo "Checking authentication..."
+curl -f -s "$API_URL/v1/auth/me" \
+  -H "Authorization: Bearer $TOKEN" > /dev/null
+
+# Layer 3: Mirror status
+echo "Checking mirrors..."
+MIRRORS=$(curl -f -s "$API_URL/v1/mirrors" \
+  -H "Authorization: Bearer $TOKEN")
+
+# Check if any mirrors are in error state
+ERROR_COUNT=$(echo "$MIRRORS" | jq '[.[] | select(.status == "error")] | length')
+if [ "$ERROR_COUNT" -gt 0 ]; then
+  echo "✗ $ERROR_COUNT mirror(s) in error state"
+  exit 1
+fi
+
+echo "✓ All health checks passed"
+```
+
+## Related Endpoints
+
+- [Authentication](/api-reference/authentication) - Check authentication system health
+- [Mirrors](/api-reference/mirrors) - Monitor mirror replication health
+- [Logs](/api-reference/logs) - Review operational logs for issues
+
+<Callout type="info">
+For detailed monitoring strategies and metrics to track, see the [Monitoring](/monitoring) page.
+</Callout>

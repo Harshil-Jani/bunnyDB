@@ -1,0 +1,750 @@
+import { Callout, Steps, Tabs } from 'nextra/components'
+
+# Troubleshooting
+
+Diagnose and resolve common issues with BunnyDB replication. This guide covers error messages, debugging steps, and recovery procedures.
+
+## Common Errors and Solutions
+
+### 1. Replication Slot Already Exists
+
+**Error Message:**
+```
+ERROR: replication slot "bunny_slot_my_mirror" already exists
+```
+
+**Cause**: A replication slot from a previous run still exists on the source database.
+
+**Solution**:
+
+<Tabs items={['Quick Fix', 'Manual Cleanup']}>
+<Tabs.Tab>
+Use the retry endpoint to drop and recreate the slot:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/retry \
+  -H "Authorization: Bearer <token>"
+```
+
+The retry operation automatically drops the slot and restarts.
+</Tabs.Tab>
+<Tabs.Tab>
+Manually drop the slot on the source database:
+
+```sql
+-- Check existing slots
+SELECT * FROM pg_replication_slots;
+
+-- Drop the conflicting slot
+SELECT pg_drop_replication_slot('bunny_slot_my_mirror');
+```
+
+Then retry the mirror:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/retry \
+  -H "Authorization: Bearer <token>"
+```
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="warning">
+Dropping a replication slot discards any WAL data that hasn't been replicated yet. This may result in data loss if the mirror was mid-sync.
+</Callout>
+
+---
+
+### 2. Slot is Active
+
+**Error Message:**
+```
+ERROR: replication slot "bunny_slot_my_mirror" is active for PID 12345
+```
+
+**Cause**: Another connection (often from a previous worker or incomplete shutdown) is using the replication slot.
+
+**Solution**:
+
+<Steps>
+
+### Use retry endpoint
+The RetryNow signal drops the slot before recreating:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/retry \
+  -H "Authorization: Bearer <token>"
+```
+
+### If retry fails, terminate the connection manually
+
+Find the PID using the slot:
+
+```sql
+SELECT
+  slot_name,
+  active_pid,
+  pg_terminate_backend(active_pid) AS terminated
+FROM pg_replication_slots
+WHERE slot_name = 'bunny_slot_my_mirror' AND active;
+```
+
+### Retry the mirror again
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/retry \
+  -H "Authorization: Bearer <token>"
+```
+
+</Steps>
+
+---
+
+### 3. Workflow Execution Already Completed
+
+**Error Message:**
+```
+ERROR: workflow execution already completed
+```
+
+**Cause**: The Temporal workflow has finished (succeeded or failed), but BunnyDB is trying to send a signal or query to it.
+
+**Solution**:
+
+Use the retry endpoint to start a fresh workflow:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/retry \
+  -H "Authorization: Bearer <token>"
+```
+
+This creates a new workflow execution and restarts the mirror.
+
+<Callout type="info">
+This error often occurs after a mirror has been stopped or failed. Retry creates a new workflow execution from scratch.
+</Callout>
+
+---
+
+### 4. Heartbeat Timeout
+
+**Error Message:**
+```
+ERROR: activity heartbeat timeout
+```
+
+**Cause**: The worker activity stopped sending heartbeats to Temporal, often because:
+- Worker process crashed or was killed
+- Activity is stuck in a long-running operation
+- Network issues between worker and Temporal
+
+**Solution**:
+
+<Steps>
+
+### Check worker logs
+
+```bash
+docker compose logs bunny-worker | tail -100
+```
+
+Look for crash messages, panics, or OOM errors.
+
+### Verify worker is running
+
+```bash
+docker compose ps bunny-worker
+```
+
+If stopped, restart it:
+
+```bash
+docker compose up -d bunny-worker
+```
+
+### Check Temporal connectivity
+
+Verify worker can reach Temporal:
+
+```bash
+docker compose exec bunny-worker curl temporal:7233
+```
+
+### Retry the mirror
+
+Once the worker is healthy:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/retry \
+  -H "Authorization: Bearer <token>"
+```
+
+</Steps>
+
+<Callout type="info">
+BunnyDB sends heartbeats during long-running operations like snapshot and batch apply. Timeouts indicate the worker isn't processing activities.
+</Callout>
+
+---
+
+### 5. Relation Does Not Exist (Destination)
+
+**Error Message:**
+```
+ERROR: relation "public.users" does not exist
+```
+
+**Cause**: The table hasn't been created on the destination database yet, typically because:
+- Initial snapshot was skipped (`do_initial_snapshot: false`)
+- Schema sync hasn't run
+- Table creation failed during snapshot
+
+**Solution**:
+
+<Tabs items={['Schema Sync', 'Full Resync']}>
+<Tabs.Tab>
+Sync the schema to create missing tables:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/sync-schema \
+  -H "Authorization: Bearer <token>"
+```
+
+This creates tables on the destination without re-copying data.
+</Tabs.Tab>
+<Tabs.Tab>
+Perform a full resync to snapshot and create all tables:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/resync \
+  -H "Authorization: Bearer <token>"
+```
+
+This truncates and re-copies all data.
+</Tabs.Tab>
+</Tabs>
+
+---
+
+### 6. Operation Already in Progress (409)
+
+**Error Message:**
+```
+HTTP 409: Another operation is already in progress
+```
+
+**Cause**: BunnyDB is processing another signal (pause, resume, resync, etc.) and cannot accept a new operation simultaneously.
+
+**Solution**:
+
+Wait for the current operation to complete, then retry:
+
+```bash
+# Check current status
+curl http://localhost:8112/v1/mirrors/my-mirror \
+  -H "Authorization: Bearer <token>"
+
+# Wait a few seconds
+sleep 5
+
+# Retry your operation
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/pause \
+  -H "Authorization: Bearer <token>"
+```
+
+<Callout type="info">
+Only one control operation (pause, resume, resync, retry, sync-schema) can be active at a time. This prevents conflicting state changes.
+</Callout>
+
+---
+
+### 7. Mirror Must Be Paused to Update Tables
+
+**Error Message:**
+```
+HTTP 409: Mirror must be paused to update tables
+```
+
+**Cause**: Attempted to update table mappings while the mirror is running.
+
+**Solution**:
+
+<Steps>
+
+### Pause the mirror
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/pause \
+  -H "Authorization: Bearer <token>"
+```
+
+### Update table mappings
+
+```bash
+curl -X PUT http://localhost:8112/v1/mirrors/my-mirror/tables \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "table_mappings": [...]
+  }'
+```
+
+### Resume the mirror
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/resume \
+  -H "Authorization: Bearer <token>"
+```
+
+</Steps>
+
+---
+
+### 8. LSN Not Advancing
+
+**Symptom**: Mirror status shows `last_lsn` is not changing over time.
+
+**Causes**:
+- No new changes on source database
+- Replication slot inactive
+- Mirror paused or in error state
+- Publication not configured correctly
+
+**Diagnosis**:
+
+<Steps>
+
+### Check mirror status
+
+```bash
+curl http://localhost:8112/v1/mirrors/my-mirror \
+  -H "Authorization: Bearer <token>" | jq '.status, .last_lsn, .error_message'
+```
+
+### Verify replication slot on source
+
+```sql
+SELECT
+  slot_name,
+  active,
+  confirmed_flush_lsn,
+  pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) AS lag_bytes
+FROM pg_replication_slots
+WHERE slot_name = 'bunny_slot_my_mirror';
+```
+
+If `active = false`, the mirror isn't connected.
+
+### Check publication
+
+```sql
+SELECT * FROM pg_publication_tables
+WHERE pubname = 'bunny_pub_my_mirror';
+```
+
+Verify all expected tables are listed.
+
+### Generate test changes
+
+Insert/update/delete rows in source tables:
+
+```sql
+INSERT INTO public.users (username) VALUES ('test-user');
+```
+
+Wait for `cdc_sync_interval_seconds`, then check if LSN advanced.
+
+</Steps>
+
+**Solution**:
+
+If slot inactive or error state:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/retry \
+  -H "Authorization: Bearer <token>"
+```
+
+If publication missing tables, use schema sync:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/sync-schema \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+### 9. Foreign Key Violations
+
+**Error Message:**
+```
+ERROR: insert or update on table "orders" violates foreign key constraint "fk_user_id"
+```
+
+**Cause**: BunnyDB applies batches of changes in parallel, which can temporarily violate foreign key constraints if parent and child rows arrive out of order.
+
+**Solution**:
+
+BunnyDB automatically handles this by using `DEFERRABLE INITIALLY DEFERRED` constraints on destination tables. This defers constraint checks until transaction commit.
+
+**Ensure constraints are deferrable**:
+
+```sql
+-- Check existing constraints
+SELECT
+  conname,
+  contype,
+  condeferrable,
+  condeferred
+FROM pg_constraint
+WHERE conrelid = 'public.orders'::regclass;
+
+-- Make constraint deferrable
+ALTER TABLE public.orders
+  DROP CONSTRAINT fk_user_id,
+  ADD CONSTRAINT fk_user_id
+    FOREIGN KEY (user_id)
+    REFERENCES public.users(id)
+    DEFERRABLE INITIALLY DEFERRED;
+```
+
+<Callout type="info">
+BunnyDB creates destination tables with deferrable constraints during initial snapshot. If you've created tables manually, ensure constraints are deferrable.
+</Callout>
+
+---
+
+## Debugging Steps
+
+When encountering an issue, follow these steps systematically:
+
+### 1. Check Mirror Status
+
+```bash
+curl http://localhost:8112/v1/mirrors/my-mirror \
+  -H "Authorization: Bearer <token>" | jq '.'
+```
+
+Look for:
+- `status` field (should be `running`)
+- `error_message` (describes current error)
+- `error_count` (number of consecutive errors)
+
+### 2. Review Logs
+
+```bash
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?level=ERROR&limit=20" \
+  -H "Authorization: Bearer <token>" | jq '.logs[] | {created_at, message, details}'
+```
+
+Error logs reveal:
+- What operation failed
+- Why it failed (connection, SQL error, timeout)
+- When it started failing
+
+### 3. Check Temporal UI
+
+Navigate to http://localhost:8085 and:
+- Find the workflow for your mirror
+- Check workflow status (Running, Failed, Completed)
+- Review activity failures and stack traces
+- Examine workflow history for timing issues
+
+### 4. Check Docker Logs
+
+```bash
+docker compose logs --tail=100 bunny-worker
+```
+
+Worker logs show:
+- Low-level errors not captured in API logs
+- Panics or crashes
+- Connection issues
+- Temporal workflow errors
+
+### 5. Verify Source Database
+
+```sql
+-- Check replication slot
+SELECT * FROM pg_replication_slots
+WHERE slot_name LIKE 'bunny_%';
+
+-- Check publication
+SELECT * FROM pg_publication_tables
+WHERE pubname LIKE 'bunny_%';
+
+-- Check WAL level
+SHOW wal_level;
+
+-- Check slot lag
+SELECT
+  slot_name,
+  pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)) AS lag
+FROM pg_replication_slots
+WHERE slot_name LIKE 'bunny_%';
+```
+
+### 6. Verify Destination Database
+
+```sql
+-- Check if tables exist
+SELECT schemaname, tablename
+FROM pg_tables
+WHERE schemaname = 'public';
+
+-- Check row counts
+SELECT
+  schemaname || '.' || tablename AS table,
+  n_tup_ins AS inserts,
+  n_tup_upd AS updates,
+  n_tup_del AS deletes
+FROM pg_stat_user_tables
+WHERE schemaname = 'public';
+
+-- Check for locks
+SELECT
+  relation::regclass AS table,
+  mode,
+  granted
+FROM pg_locks
+WHERE relation IS NOT NULL;
+```
+
+---
+
+## Recovery Procedures
+
+### Stuck Mirror
+
+**Symptoms**: Mirror status is `running`, but LSN not advancing, no recent logs.
+
+**Recovery**:
+
+<Steps>
+
+### Pause the mirror
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/pause \
+  -H "Authorization: Bearer <token>"
+```
+
+### Resume the mirror
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/resume \
+  -H "Authorization: Bearer <token>"
+```
+
+### If still stuck, use retry
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/retry \
+  -H "Authorization: Bearer <token>"
+```
+
+</Steps>
+
+---
+
+### Data Drift
+
+**Symptoms**: Destination data doesn't match source, row counts differ.
+
+**Recovery**:
+
+<Tabs items={['Single Table', 'All Tables']}>
+<Tabs.Tab>
+Resync the specific table:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/resync/public.users \
+  -H "Authorization: Bearer <token>"
+```
+
+This truncates and re-snapshots only that table.
+</Tabs.Tab>
+<Tabs.Tab>
+Full resync of the entire mirror:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/resync \
+  -H "Authorization: Bearer <token>"
+```
+
+This truncates and re-snapshots all tables.
+</Tabs.Tab>
+</Tabs>
+
+<Callout type="warning">
+Resync truncates destination tables. Ensure you're not losing data unique to the destination.
+</Callout>
+
+---
+
+### Schema Drift
+
+**Symptoms**: Source and destination schemas don't match (columns added/removed/changed).
+
+**Recovery**:
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors/my-mirror/sync-schema \
+  -H "Authorization: Bearer <token>"
+```
+
+Schema sync:
+- Detects schema differences
+- Generates and applies DDL on destination
+- Preserves existing data
+
+<Callout type="info">
+Schema sync drops and recreates the replication slot to ensure schema changes are detected properly.
+</Callout>
+
+---
+
+### Complete Failure
+
+**Symptoms**: Mirror cannot be recovered through retry/resync.
+
+**Recovery**:
+
+<Steps>
+
+### Delete the mirror
+
+```bash
+curl -X DELETE http://localhost:8112/v1/mirrors/my-mirror \
+  -H "Authorization: Bearer <token>"
+```
+
+This cleans up:
+- Temporal workflow
+- Replication slot on source
+- Publication on source
+- BunnyDB metadata
+
+### Verify cleanup on source
+
+```sql
+SELECT * FROM pg_replication_slots WHERE slot_name = 'bunny_slot_my_mirror';
+-- Should return 0 rows
+
+SELECT * FROM pg_publication WHERE pubname = 'bunny_pub_my_mirror';
+-- Should return 0 rows
+```
+
+### Recreate the mirror
+
+```bash
+curl -X POST http://localhost:8112/v1/mirrors \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-mirror",
+    "source_peer": "source-db",
+    "destination_peer": "dest-db",
+    "table_mappings": [...]
+  }'
+```
+
+</Steps>
+
+---
+
+## Performance Issues
+
+### Slow Snapshot
+
+**Symptoms**: Initial snapshot takes too long.
+
+**Diagnosis**:
+
+```bash
+# Check snapshot progress in logs
+curl "http://localhost:8112/v1/mirrors/my-mirror/logs?search=snapshot" \
+  -H "Authorization: Bearer <token>"
+```
+
+**Solutions**:
+
+1. **Increase parallelism**:
+   ```json
+   {
+     "snapshot_max_parallel_workers": 8,
+     "snapshot_num_tables_in_parallel": 4
+   }
+   ```
+
+2. **Larger partitions**:
+   ```json
+   {
+     "snapshot_num_rows_per_partition": 1000000
+   }
+   ```
+
+3. **Check database resources**: CPU, memory, I/O on source and destination
+
+4. **Network bandwidth**: Slow network between source and destination
+
+---
+
+### High Replication Lag
+
+**Symptoms**: LSN advancing but lagging far behind source.
+
+**Diagnosis**:
+
+Check lag on source:
+
+```sql
+SELECT
+  slot_name,
+  pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)) AS lag
+FROM pg_replication_slots;
+```
+
+**Solutions**:
+
+1. **Increase batch size**:
+   ```json
+   {
+     "cdc_batch_size": 50000
+   }
+   ```
+
+2. **Decrease sync interval**:
+   ```json
+   {
+     "cdc_sync_interval_seconds": 30
+   }
+   ```
+
+3. **Scale worker resources**: More CPU, RAM
+
+4. **Optimize destination**: Add indexes, tune PostgreSQL settings
+
+5. **Check destination locks**: Long-running transactions blocking inserts
+
+---
+
+## Getting Help
+
+If you're still stuck after trying these troubleshooting steps:
+
+1. **Gather diagnostic information**:
+   - Mirror status (GET /v1/mirrors/\{name\})
+   - Recent error logs (GET /v1/mirrors/\{name\}/logs?level=ERROR)
+   - Temporal workflow ID and status
+   - Docker worker logs
+   - Source database replication slot status
+
+2. **Check existing issues**: Search GitHub issues for similar problems
+
+3. **Open an issue**: Include all diagnostic information
+
+4. **Community support**: Join discussions on GitHub
+
+<Callout type="info">
+When reporting issues, always include BunnyDB version, PostgreSQL versions (source and dest), mirror configuration, and complete error messages.
+</Callout>
