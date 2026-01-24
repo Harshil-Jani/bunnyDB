@@ -13,8 +13,8 @@ export function BunnyLogo({ size = 32, className = '' }: BunnyLogoProps) {
       height={size}
       className={className}
     >
-      {/* Background */}
-      <circle cx="32" cy="32" r="30" fill="#f0750f" />
+      {/* Background - classic Bugs Bunny blue */}
+      <circle cx="32" cy="32" r="30" fill="#4a90d9" />
       {/* Left ear - tall, expressive */}
       <ellipse cx="23" cy="12" rx="5.5" ry="14" fill="#e8e8e8" transform="rotate(-12 23 12)" />
       <ellipse cx="23" cy="12" rx="3" ry="10" fill="#ffb8b8" transform="rotate(-12 23 12)" />
