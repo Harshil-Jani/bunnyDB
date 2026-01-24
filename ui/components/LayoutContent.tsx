@@ -56,6 +56,7 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
               <div className="flex items-center space-x-4">
                 <a href="/mirrors" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Mirrors</a>
                 <a href="/peers" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Peers</a>
+                <a href="/settings" className="text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white">Settings</a>
                 <ThemeToggle />
                 {user && (
                   <div className="flex items-center gap-3 ml-2 pl-4 border-l border-gray-200 dark:border-gray-700">
