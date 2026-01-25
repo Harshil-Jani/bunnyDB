@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ArrowRight, Database, ArrowDown, CheckCircle, Play, Pause, RefreshCw, FileText, Github, BookOpen } from 'lucide-react';
+import { ArrowRight, Database, ArrowDown, CheckCircle, Play, Pause, RefreshCw, FileText, Github, BookOpen, Server, Terminal } from 'lucide-react';
 import { BunnyLogo } from '../components/BunnyLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
 
@@ -591,32 +591,55 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* CTA */}
+      {/* Self-Host CTA */}
       <section className="border-t border-gray-100 dark:border-gray-900">
-        <div className="max-w-5xl mx-auto px-6 py-20 text-center">
-          <p className="text-lg text-gray-900 dark:text-white font-medium">
-            Ready to get started?
-          </p>
-          <p className="mt-1.5 text-sm text-gray-500 dark:text-gray-400">
-            Follow our quickstart guide to set up BunnyDB and create your first mirror.
-          </p>
-          <div className="mt-6 flex items-center justify-center gap-4">
-            <a
-              href={`${basePath}/docs/quickstart`}
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
-            >
-              View Quickstart
-              <ArrowRight className="w-4 h-4" />
-            </a>
-            <a
-              href="https://github.com/Harshil-Jani/bunnyDB"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
-            >
-              <Github className="w-4 h-4" />
-              Star on GitHub
-            </a>
+        <div className="max-w-5xl mx-auto px-6 py-16">
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-gray-900 to-gray-800 dark:from-gray-800 dark:to-gray-900 p-8 md:p-12">
+            <div className="relative z-10">
+              <div className="flex items-center gap-2 mb-4">
+                <Server className="w-5 h-5 text-bunny-400" />
+                <span className="text-sm font-medium text-bunny-400">Self-Hosted</span>
+              </div>
+              <h2 className="text-2xl md:text-3xl font-bold text-white mb-3">
+                Deploy on your infrastructure
+              </h2>
+              <p className="text-gray-400 max-w-xl mb-6">
+                Run BunnyDB on your EC2 instances, local servers, or any Docker host.
+                You own your data, your infrastructure, your uptime.
+              </p>
+              <div className="bg-gray-950/50 rounded-lg p-4 mb-6 font-mono text-sm max-w-md">
+                <div className="flex items-center gap-2 text-gray-500 mb-1">
+                  <Terminal className="w-4 h-4" />
+                  <span>Terminal</span>
+                </div>
+                <div className="text-gray-300">
+                  <span className="text-gray-500">$</span> git clone github.com/Harshil-Jani/bunnyDB<br />
+                  <span className="text-gray-500">$</span> cd bunnyDB && make setup<br />
+                  <span className="text-gray-500">$</span> make up
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <a
+                  href={`${basePath}/docs/self-hosting`}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-white text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  Self-Hosting Guide
+                  <ArrowRight className="w-4 h-4" />
+                </a>
+                <a
+                  href="https://github.com/Harshil-Jani/bunnyDB"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white border border-gray-600 rounded-lg hover:border-gray-500 transition-colors"
+                >
+                  <Github className="w-4 h-4" />
+                  View on GitHub
+                </a>
+              </div>
+            </div>
+            {/* Background decoration */}
+            <div className="absolute top-0 right-0 w-64 h-64 bg-bunny-500/10 rounded-full blur-3xl" />
+            <div className="absolute bottom-0 left-0 w-48 h-48 bg-bunny-600/10 rounded-full blur-3xl" />
           </div>
         </div>
       </section>
