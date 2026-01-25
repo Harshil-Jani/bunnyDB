@@ -54,7 +54,7 @@ const features: Feature[] = [
     id: 'observe',
     icon: Activity,
     title: 'Full Observability',
-    description: 'Per-table row counts, LSN tracking, sync batch IDs, and structured logs — all in real-time.',
+    description: 'Per-table row counts, LSN tracking, sync batch IDs, and structured logs - all in real-time.',
     color: '#f0750f',
   },
 ];

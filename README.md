@@ -25,7 +25,7 @@
 
 ## What is BunnyDB?
 
-BunnyDB is a self-hosted PostgreSQL-to-PostgreSQL replication tool built on Change Data Capture (CDC). It handles the hard parts of database replication — schema changes, indexes, foreign keys, and table-level resyncs — so you don't have to.
+BunnyDB is a self-hosted PostgreSQL-to-PostgreSQL replication tool built on Change Data Capture (CDC). It handles the hard parts of database replication - schema changes, indexes, foreign keys, and table-level resyncs - so you don't have to.
 
 > **Self-Hosted**: Run on your EC2 instances, local servers, or any Docker host. You own your data, your infrastructure, your uptime.
 >
@@ -33,16 +33,16 @@ BunnyDB is a self-hosted PostgreSQL-to-PostgreSQL replication tool built on Chan
 
 ## Key Features
 
-- **CDC Replication** — Real-time streaming via PostgreSQL logical replication
-- **Schema Sync** — On-demand DDL sync (columns, types, defaults, constraints)
-- **Index Replication** — All index types: B-tree, Hash, GIN, GiST, SP-GiST, BRIN
-- **Foreign Key Handling** — Deferred FK strategy for batch consistency
-- **Table-Level Resync** — Resync individual tables without mirror restart
-- **Zero-Downtime Swap Resync** — Shadow table + atomic rename for production safety
-- **Pause / Resume** — Full control over replication lifecycle
-- **On-Demand Retry** — Skip Temporal's backoff circuit for immediate retries
-- **User Management & RBAC** — Admin and viewer roles with JWT auth
-- **Web UI** — Monitor mirrors, manage peers, control replication visually
+- **CDC Replication** - Real-time streaming via PostgreSQL logical replication
+- **Schema Sync** - On-demand DDL sync (columns, types, defaults, constraints)
+- **Index Replication** - All index types: B-tree, Hash, GIN, GiST, SP-GiST, BRIN
+- **Foreign Key Handling** - Deferred FK strategy for batch consistency
+- **Table-Level Resync** - Resync individual tables without mirror restart
+- **Zero-Downtime Swap Resync** - Shadow table + atomic rename for production safety
+- **Pause / Resume** - Full control over replication lifecycle
+- **On-Demand Retry** - Skip Temporal's backoff circuit for immediate retries
+- **User Management & RBAC** - Admin and viewer roles with JWT auth
+- **Web UI** - Monitor mirrors, manage peers, control replication visually
 
 ## Architecture
 
@@ -250,4 +250,4 @@ See [Contributing Guide](https://harshil-jani.github.io/bunnyDB/docs/contributin
 
 ## License
 
-Apache 2.0 — Derived from [PeerDB](https://github.com/PeerDB-io/peerdb) (ELv2)
+Apache 2.0 - Derived from [PeerDB](https://github.com/PeerDB-io/peerdb) (ELv2)

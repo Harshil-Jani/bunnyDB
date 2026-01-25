@@ -7,7 +7,7 @@ export function getTourSteps(role: 'admin' | 'readonly'): Tour[] {
     {
       icon: '🐰',
       title: 'Welcome to BunnyDB',
-      content: 'Postgres-to-Postgres CDC replication. Quick tour — under 30 seconds.',
+      content: 'Postgres-to-Postgres CDC replication. Quick tour - under 30 seconds.',
       side: 'bottom',
       showControls: true,
       showSkip: true,

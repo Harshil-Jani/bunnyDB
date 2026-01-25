@@ -29,7 +29,7 @@ function PeersScreen() {
         <span className="text-xs font-semibold text-gray-900 dark:text-white">Peers</span>
         <div className="px-2 py-0.5 bg-blue-500 text-white text-[9px] font-medium rounded">+ Add Peer</div>
       </div>
-      <p className="text-[9px] text-gray-400 dark:text-gray-500 mb-2">A <span className="font-semibold text-gray-600 dark:text-gray-300">Peer</span> is a PostgreSQL connection — your source or destination database.</p>
+      <p className="text-[9px] text-gray-400 dark:text-gray-500 mb-2">A <span className="font-semibold text-gray-600 dark:text-gray-300">Peer</span> is a PostgreSQL connection - your source or destination database.</p>
       {[
         { name: 'production-db', host: 'pg-prod.internal', port: 5432, role: 'source' },
         { name: 'analytics-replica', host: 'pg-analytics.internal', port: 5432, role: 'destination' },
@@ -77,7 +77,7 @@ function CreateMirrorScreen() {
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs font-semibold text-gray-900 dark:text-white">Create Mirror</span>
       </div>
-      <p className="text-[9px] text-gray-400 dark:text-gray-500 mb-2">A <span className="font-semibold text-gray-600 dark:text-gray-300">Mirror</span> is a replication job — name it, pick a source peer and a destination peer.</p>
+      <p className="text-[9px] text-gray-400 dark:text-gray-500 mb-2">A <span className="font-semibold text-gray-600 dark:text-gray-300">Mirror</span> is a replication job - name it, pick a source peer and a destination peer.</p>
       <div className="space-y-2">
         <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-2.5">
           <div className="text-[9px] text-gray-400 mb-1">Mirror Name</div>
@@ -181,7 +181,7 @@ function MonitorScreen() {
         <span className="text-xs font-semibold text-gray-900 dark:text-white">Mirrors</span>
         <div className="px-2 py-0.5 bg-blue-500 text-white text-[9px] font-medium rounded">+ Create Mirror</div>
       </div>
-      <p className="text-[9px] text-gray-400 dark:text-gray-500 mb-2">A <span className="font-semibold text-gray-600 dark:text-gray-300">Mirror</span> is a live replication job — it continuously streams WAL changes between two peers.</p>
+      <p className="text-[9px] text-gray-400 dark:text-gray-500 mb-2">A <span className="font-semibold text-gray-600 dark:text-gray-300">Mirror</span> is a live replication job - it continuously streams WAL changes between two peers.</p>
       {/* Active mirror */}
       <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-3">
         <div className="flex items-center justify-between mb-2">
@@ -608,14 +608,14 @@ export default function LandingPage() {
               { title: 'Per-table control', desc: 'Resync individual tables without touching others. Pause and resume at will.' },
               { title: 'Index preservation', desc: 'Destination indexes are auto-created to match source structure.' },
               { title: 'FK-aware operations', desc: 'Foreign keys are dropped and recreated during swap resync automatically.' },
-              { title: 'Event-level logging', desc: 'Searchable, filterable logs categorized by event type — setup, replication, schema, resync.' },
+              { title: 'Event-level logging', desc: 'Searchable, filterable logs categorized by event type - setup, replication, schema, resync.' },
               { title: 'LSN checkpointing', desc: 'Batch IDs and WAL positions tracked for exactly-once delivery guarantees.' },
             ].map((item, i) => (
               <div key={i} className="flex gap-3">
                 <div className="mt-1.5 w-1 h-1 rounded-full bg-bunny-500 flex-shrink-0" />
                 <div>
                   <span className="text-sm font-medium text-gray-900 dark:text-white">{item.title}</span>
-                  <span className="text-sm text-gray-500 dark:text-gray-400 ml-1.5">&mdash; {item.desc}</span>
+                  <span className="text-sm text-gray-500 dark:text-gray-400 ml-1.5">- {item.desc}</span>
                 </div>
               </div>
             ))}
