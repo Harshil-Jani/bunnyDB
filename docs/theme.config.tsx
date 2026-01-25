@@ -14,11 +14,7 @@ const config: DocsThemeConfig = {
   },
   docsRepositoryBase: 'https://github.com/Harshil-Jani/bunnyDB/tree/main/docs',
   footer: {
-    content: (
-      <span>
-        {new Date().getFullYear()} BunnyDB — PostgreSQL-to-PostgreSQL CDC Replication
-      </span>
-    ),
+    component: null,
   },
   head: (
     <>
