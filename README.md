@@ -252,4 +252,4 @@ See [Contributing Guide](https://harshil-jani.github.io/bunnyDB/docs/contributin
 
 ## License
 
-[Elastic License 2.0 (ELv2)](LICENSE) - You may use, copy, and modify the software for any purpose except providing it as a managed service to third parties.
+[Elastic License 2.0 (ELv2)](LICENSE.md) - You may use, copy, and modify the software for any purpose except providing it as a managed service to third parties.
