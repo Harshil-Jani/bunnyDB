@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/version-v1.0.0-brightgreen" alt="Version 1.0.0" />
   <img src="https://img.shields.io/badge/deployment-self--hosted-blue" alt="Self-Hosted" />
   <img src="https://img.shields.io/badge/cloud-coming%20soon-yellow" alt="Cloud Coming Soon" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License" />

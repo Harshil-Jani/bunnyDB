@@ -52,6 +52,9 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
                 <a href="/" className="flex items-center">
                   <BunnyLogo size={28} />
                   <span className="ml-2 text-xl font-bold text-gray-900 dark:text-white">BunnyDB</span>
+                  <span className="ml-2 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                    v1.0.0
+                  </span>
                 </a>
               </div>
               <div className="flex items-center space-x-4">

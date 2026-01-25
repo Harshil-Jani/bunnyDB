@@ -415,6 +415,9 @@ export default function LandingPage() {
       <section className="max-w-6xl mx-auto px-6 pt-16 pb-12">
         <div className="text-center max-w-3xl mx-auto mb-12">
           <div className="flex items-center justify-center gap-2 mb-4">
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200">
+              v1.0.0
+            </span>
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-bunny-100 text-bunny-800 dark:bg-bunny-900 dark:text-bunny-200">
               Self-Hosted
             </span>

@@ -8,6 +8,14 @@ const config: DocsThemeConfig = {
     <a href={homeUrl} style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none', color: 'inherit' }}>
       <img src={`${basePath}/bunny-logo.svg`} alt="BunnyDB" width={28} height={28} />
       <span style={{ fontWeight: 700, fontSize: '1.1rem' }}>BunnyDB</span>
+      <span style={{
+        fontSize: '0.65rem',
+        fontWeight: 500,
+        padding: '2px 6px',
+        borderRadius: '9999px',
+        backgroundColor: 'rgba(34, 197, 94, 0.15)',
+        color: 'rgb(22, 163, 74)'
+      }}>v1.0.0</span>
     </a>
   ),
   logoLink: false,
