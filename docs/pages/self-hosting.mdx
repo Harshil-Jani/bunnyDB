@@ -12,8 +12,8 @@ BunnyDB is designed to run on your own infrastructure. This guide covers everyth
 ## Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/Harshil-Jani/bunnyDB.git
+# Clone the latest stable release
+git clone --branch v1.0.0 --depth 1 https://github.com/Harshil-Jani/bunnyDB.git
 cd bunnyDB
 
 # Create your environment configuration
@@ -217,9 +217,14 @@ docker run --rm -v bunnydb_bunny-pgdata:/data -v $(pwd):/backup \
 
 ## Updating BunnyDB
 
+Check for new releases at [GitHub Releases](https://github.com/Harshil-Jani/bunnyDB/releases).
+
 ```bash
-# Pull latest changes
-git pull origin main
+# Fetch latest tags
+git fetch --tags
+
+# Checkout new version (replace with actual version)
+git checkout v1.0.0
 
 # Rebuild and restart
 docker compose down

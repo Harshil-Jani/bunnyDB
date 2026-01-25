@@ -466,7 +466,7 @@ export default function LandingPage() {
               <div className="p-5 font-mono text-sm space-y-3">
                 <div>
                   <span className="text-gray-500">$</span>
-                  <span className="text-gray-300 ml-2">git clone https://github.com/Harshil-Jani/bunnyDB</span>
+                  <span className="text-gray-300 ml-2">git clone --branch v1.0.0 https://github.com/Harshil-Jani/bunnyDB</span>
                 </div>
                 <div>
                   <span className="text-gray-500">$</span>

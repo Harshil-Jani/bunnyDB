@@ -80,7 +80,8 @@ BunnyDB is a self-hosted PostgreSQL-to-PostgreSQL replication tool built on Chan
 ### Quick Start (Core)
 
 ```bash
-git clone https://github.com/Harshil-Jani/bunnyDB.git
+# Clone the latest stable release
+git clone --branch v1.0.0 --depth 1 https://github.com/Harshil-Jani/bunnyDB.git
 cd bunnyDB
 
 # First-time setup: create .env from template
