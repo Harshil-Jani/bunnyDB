@@ -1,20 +1,20 @@
 name: bunnydb
 
 x-catalog-config: &catalog-config
-  BUNNY_CATALOG_HOST: catalog
-  BUNNY_CATALOG_PORT: 5432
-  BUNNY_CATALOG_USER: postgres
-  BUNNY_CATALOG_PASSWORD: bunnydb
-  BUNNY_CATALOG_DATABASE: bunnydb
+  BUNNY_CATALOG_HOST: ${BUNNY_CATALOG_HOST:-catalog}
+  BUNNY_CATALOG_PORT: ${BUNNY_CATALOG_PORT:-5432}
+  BUNNY_CATALOG_USER: ${BUNNY_CATALOG_USER:-postgres}
+  BUNNY_CATALOG_PASSWORD: ${BUNNY_CATALOG_PASSWORD:-bunnydb}
+  BUNNY_CATALOG_DATABASE: ${BUNNY_CATALOG_DATABASE:-bunnydb}
 
 x-temporal-config: &temporal-config
-  TEMPORAL_HOST_PORT: temporal:7233
-  TEMPORAL_NAMESPACE: default
+  TEMPORAL_HOST_PORT: ${TEMPORAL_HOST_PORT:-temporal:7233}
+  TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
 
 x-auth-config: &auth-config
-  BUNNY_JWT_SECRET: change-me-in-production-use-a-random-string
-  BUNNY_ADMIN_USER: admin
-  BUNNY_ADMIN_PASSWORD: admin
+  BUNNY_JWT_SECRET: ${BUNNY_JWT_SECRET:-change-me-in-production-use-a-random-string}
+  BUNNY_ADMIN_USER: ${BUNNY_ADMIN_USER:-admin}
+  BUNNY_ADMIN_PASSWORD: ${BUNNY_ADMIN_PASSWORD:-admin}
 
 services:
   catalog:
@@ -25,9 +25,9 @@ services:
     ports:
       - 5433:5432
     environment:
-      PGUSER: postgres
-      POSTGRES_PASSWORD: bunnydb
-      POSTGRES_DB: bunnydb
+      PGUSER: ${BUNNY_CATALOG_USER:-postgres}
+      POSTGRES_PASSWORD: ${BUNNY_CATALOG_PASSWORD:-bunnydb}
+      POSTGRES_DB: ${BUNNY_CATALOG_DATABASE:-bunnydb}
       POSTGRES_INITDB_ARGS: --locale=C.UTF-8
     extra_hosts:
       - "host.docker.internal:host-gateway"

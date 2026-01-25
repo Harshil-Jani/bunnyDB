@@ -1,0 +1,257 @@
+# Self-Hosting BunnyDB
+
+BunnyDB is designed to run on your own infrastructure. This guide covers everything you need to deploy BunnyDB on your EC2 instance, local server, or any Docker-capable host.
+
+## Prerequisites
+
+- **Docker** 20.10+ and **Docker Compose** v2
+- **Git** (to clone the repository)
+- At least **2GB RAM** and **10GB disk space**
+- Network access to your PostgreSQL source and destination databases
+
+## Quick Start
+
+```bash
+# Clone the repository
+git clone https://github.com/Harshil-Jani/bunnyDB.git
+cd bunnyDB
+
+# Create your environment configuration
+make setup
+
+# Edit .env with your production values
+# IMPORTANT: Change the default passwords and JWT secret!
+
+# Start BunnyDB
+make up
+```
+
+That's it! BunnyDB is now running at:
+- **UI**: http://localhost:3000
+- **API**: http://localhost:8112
+- **Temporal UI**: http://localhost:8085
+
+Default login: `admin` / `admin` (change this immediately!)
+
+## Configuration
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+cp .env.example .env
+```
+
+**Critical settings for production:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BUNNY_JWT_SECRET` | `change-me-...` | JWT signing secret - **must change** |
+| `BUNNY_ADMIN_USER` | `admin` | Initial admin username |
+| `BUNNY_ADMIN_PASSWORD` | `admin` | Initial admin password - **must change** |
+| `BUNNY_CATALOG_PASSWORD` | `bunnydb` | Internal database password |
+
+**Generate a secure JWT secret:**
+
+```bash
+openssl rand -base64 32
+```
+
+### Docker Compose Profiles
+
+BunnyDB uses profiles to optionally include additional services:
+
+```bash
+# Core only (default) - UI, API, Worker, Temporal
+docker compose up -d
+
+# Include local documentation
+docker compose --profile docs up -d
+
+# Include test databases for development
+docker compose --profile dev up -d
+
+# Include everything
+docker compose --profile dev --profile docs up -d
+```
+
+Or use the Makefile shortcuts:
+
+```bash
+make up      # Core only
+make docs    # Core + docs
+make dev     # Core + test DBs
+make all     # Everything
+```
+
+## Makefile Commands
+
+The included Makefile provides convenient shortcuts:
+
+| Command | Description |
+|---------|-------------|
+| `make setup` | First-time setup (creates .env) |
+| `make up` | Start all core services |
+| `make down` | Stop all services |
+| `make restart` | Restart all services |
+| `make logs` | Tail all logs |
+| `make logs-api` | Tail API logs only |
+| `make status` | Show container status |
+| `make health` | Check API health |
+| `make clean` | Stop and delete all data |
+
+Run `make help` for the full list.
+
+## Source Database Requirements
+
+Your source PostgreSQL database must be configured for logical replication:
+
+```sql
+-- Check current settings
+SELECT name, setting FROM pg_settings
+WHERE name IN ('wal_level', 'max_replication_slots', 'max_wal_senders');
+```
+
+**Required settings** (in `postgresql.conf`):
+
+```ini
+wal_level = logical
+max_replication_slots = 4   # or higher
+max_wal_senders = 4         # or higher
+```
+
+After changing these settings, restart PostgreSQL.
+
+## Architecture Overview
+
+BunnyDB runs as a set of Docker containers:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Your Server                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │   bunny-ui  │  │  bunny-api  │  │bunny-worker │        │
+│  │   :3000     │──│   :8112     │──│  (internal) │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘        │
+│         │                │                │                │
+│         │                ▼                ▼                │
+│         │         ┌─────────────┐  ┌─────────────┐        │
+│         │         │   catalog   │  │  temporal   │        │
+│         │         │   :5433     │  │   :7233     │        │
+│         │         └─────────────┘  └─────────────┘        │
+│         │                                                  │
+└─────────┼──────────────────────────────────────────────────┘
+          │
+    ┌─────┴─────┐
+    │  Browser  │
+    └───────────┘
+```
+
+- **bunny-ui**: Next.js web dashboard
+- **bunny-api**: Go REST API server
+- **bunny-worker**: Temporal worker executing CDC workflows
+- **catalog**: Internal PostgreSQL storing BunnyDB metadata
+- **temporal**: Workflow orchestration engine
+
+## Production Considerations
+
+### Security
+
+1. **Change all default passwords** in `.env`
+2. **Use a strong JWT secret** (32+ random bytes)
+3. **Put BunnyDB behind a reverse proxy** (nginx, Traefik) with HTTPS
+4. **Restrict network access** to the API and UI ports
+
+### Reverse Proxy Example (nginx)
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name bunny.yourdomain.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /api/ {
+        proxy_pass http://localhost:8112/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+### Persistence
+
+BunnyDB data is stored in Docker volumes:
+- `bunny-pgdata`: Catalog database (mirrors, peers, logs)
+
+To back up:
+
+```bash
+docker run --rm -v bunnydb_bunny-pgdata:/data -v $(pwd):/backup \
+  alpine tar czf /backup/bunny-backup.tar.gz /data
+```
+
+### Resource Requirements
+
+| Deployment | RAM | CPU | Disk |
+|------------|-----|-----|------|
+| Development | 2GB | 1 core | 10GB |
+| Small (10 mirrors) | 4GB | 2 cores | 20GB |
+| Medium (50 mirrors) | 8GB | 4 cores | 50GB |
+
+### Monitoring
+
+- **Temporal UI** (http://localhost:8085): Monitor workflow executions
+- **API Health**: `curl http://localhost:8112/api/health`
+- **Logs**: `make logs` or `docker compose logs -f`
+
+## Updating BunnyDB
+
+```bash
+# Pull latest changes
+git pull origin main
+
+# Rebuild and restart
+docker compose down
+docker compose build
+docker compose up -d
+```
+
+## Troubleshooting
+
+### Containers not starting
+
+```bash
+# Check container status
+make status
+
+# View logs
+make logs
+
+# Check if ports are in use
+lsof -i :3000 -i :8112 -i :5433
+```
+
+### Cannot connect to source database
+
+1. Ensure the source DB allows connections from BunnyDB's host
+2. Check `pg_hba.conf` on the source for the correct host/user
+3. Verify `wal_level = logical` is set
+
+### API returns 401 Unauthorized
+
+1. Login via the UI to get a fresh token
+2. Check that `BUNNY_JWT_SECRET` hasn't changed
+3. Verify admin credentials in `.env`
+
+See [Troubleshooting](/troubleshooting) for more solutions.

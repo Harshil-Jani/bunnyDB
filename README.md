@@ -17,6 +17,7 @@
 <p align="center">
   <a href="https://harshil-jani.github.io/bunnyDB/docs">Documentation</a> &middot;
   <a href="https://harshil-jani.github.io/bunnyDB/docs/quickstart">Quickstart</a> &middot;
+  <a href="https://harshil-jani.github.io/bunnyDB/docs/self-hosting">Self-Hosting</a> &middot;
   <a href="https://harshil-jani.github.io/bunnyDB/docs/api-reference">API Reference</a>
 </p>
 
@@ -80,10 +81,19 @@ BunnyDB is a self-hosted PostgreSQL-to-PostgreSQL replication tool built on Chan
 ```bash
 git clone https://github.com/Harshil-Jani/bunnyDB.git
 cd bunnyDB
-docker compose up -d
+
+# First-time setup: create .env from template
+make setup
+
+# Edit .env with your production values (change passwords!)
+
+# Start BunnyDB
+make up
 ```
 
 This starts the core services: catalog, temporal, API, worker, and UI.
+
+> **Tip**: Use `make help` to see all available commands.
 
 - **UI**: http://localhost:3000
 - **API**: http://localhost:8112
@@ -94,7 +104,7 @@ Default login: `admin` / `admin`
 ### Full Setup (with local docs)
 
 ```bash
-docker compose --profile docs up -d
+make docs
 ```
 
 Adds a local documentation server at http://localhost:3001.
@@ -102,7 +112,7 @@ Adds a local documentation server at http://localhost:3001.
 ### Development Setup (with test databases)
 
 ```bash
-docker compose --profile dev up -d
+make dev
 ```
 
 Adds source and destination test databases for development/testing.
@@ -110,8 +120,10 @@ Adds source and destination test databases for development/testing.
 ### All Services
 
 ```bash
-docker compose --profile docs --profile dev up -d
+make all
 ```
+
+For complete self-hosting instructions including production security, reverse proxy setup, and backups, see the [Self-Hosting Guide](https://harshil-jani.github.io/bunnyDB/docs/self-hosting).
 
 ## Quick Usage
 
