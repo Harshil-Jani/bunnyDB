@@ -444,7 +444,7 @@ export default function LandingPage() {
           {/* Self-Host Terminal */}
           <div>
             <div className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3 text-center lg:text-left">
-              Deploy in 3 commands
+              Self-host in 3 commands
             </div>
             <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-lg dark:shadow-gray-900/30 bg-gray-900 dark:bg-gray-950">
               {/* Terminal chrome */}
