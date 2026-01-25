@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/version-v1.0.0-brightgreen" alt="Version 1.0.0" />
   <img src="https://img.shields.io/badge/deployment-self--hosted-blue" alt="Self-Hosted" />
   <img src="https://img.shields.io/badge/cloud-coming%20soon-yellow" alt="Cloud Coming Soon" />
-  <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License" />
+  <img src="https://img.shields.io/badge/license-ELv2-green" alt="License" />
 </p>
 
 <p align="center">
@@ -252,4 +252,4 @@ See [Contributing Guide](https://harshil-jani.github.io/bunnyDB/docs/contributin
 
 ## License
 
-Apache 2.0 - Derived from [PeerDB](https://github.com/PeerDB-io/peerdb) (ELv2)
+[Elastic License 2.0 (ELv2)](LICENSE) - You may use, copy, and modify the software for any purpose except providing it as a managed service to third parties.
