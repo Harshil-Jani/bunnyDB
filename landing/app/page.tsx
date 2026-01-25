@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ArrowRight, Database, ArrowDown, CheckCircle, Play, Pause, RefreshCw, FileText, Github, BookOpen, Server, Terminal } from 'lucide-react';
+import { ArrowRight, Database, ArrowDown, CheckCircle, Play, Pause, RefreshCw, FileText, Github, BookOpen } from 'lucide-react';
 import { BunnyLogo } from '../components/BunnyLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
 
@@ -412,9 +412,9 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero */}
-      <section className="max-w-5xl mx-auto px-6 pt-24 pb-16">
-        <div className="max-w-2xl">
-          <div className="flex items-center gap-2 mb-4">
+      <section className="max-w-6xl mx-auto px-6 pt-16 pb-12">
+        <div className="text-center max-w-3xl mx-auto mb-12">
+          <div className="flex items-center justify-center gap-2 mb-4">
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-bunny-100 text-bunny-800 dark:bg-bunny-900 dark:text-bunny-200">
               Self-Hosted
             </span>
@@ -425,31 +425,83 @@ export default function LandingPage() {
           <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 dark:text-white tracking-tight leading-[1.15]">
             PostgreSQL replication<br />that just works.
           </h1>
-          <p className="mt-5 text-lg text-gray-500 dark:text-gray-400 leading-relaxed max-w-lg">
+          <p className="mt-5 text-lg text-gray-500 dark:text-gray-400 leading-relaxed max-w-xl mx-auto">
             Real-time Change Data Capture from one Postgres to another.
             Point, click, replicate. No configuration files, no CLI gymnastics.
           </p>
-          <div className="mt-8 flex items-center gap-4">
-            <a
-              href={`${basePath}/docs/quickstart`}
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
-            >
-              Get Started
-              <ArrowRight className="w-4 h-4" />
-            </a>
-            <a
-              href={`${basePath}/docs`}
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
-            >
-              Read the Docs
-            </a>
+        </div>
+
+        {/* Side by side: Demo + Self-Host */}
+        <div className="grid lg:grid-cols-2 gap-6 items-start">
+          {/* Demo */}
+          <div>
+            <div className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3 text-center lg:text-left">
+              See it in action
+            </div>
+            <DemoAnimation />
+          </div>
+
+          {/* Self-Host Terminal */}
+          <div>
+            <div className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3 text-center lg:text-left">
+              Deploy in 3 commands
+            </div>
+            <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-lg dark:shadow-gray-900/30 bg-gray-900 dark:bg-gray-950">
+              {/* Terminal chrome */}
+              <div className="flex items-center gap-1.5 px-4 py-2 border-b border-gray-800 bg-gray-900 dark:bg-gray-900">
+                <div className="w-2 h-2 rounded-full bg-red-400" />
+                <div className="w-2 h-2 rounded-full bg-yellow-400" />
+                <div className="w-2 h-2 rounded-full bg-green-400" />
+                <div className="ml-3 flex-1 flex items-center justify-center">
+                  <div className="px-3 py-0.5 bg-gray-800 rounded text-[10px] text-gray-500 font-mono">
+                    Terminal
+                  </div>
+                </div>
+              </div>
+
+              {/* Terminal content */}
+              <div className="p-5 font-mono text-sm space-y-3">
+                <div>
+                  <span className="text-gray-500">$</span>
+                  <span className="text-gray-300 ml-2">git clone https://github.com/Harshil-Jani/bunnyDB</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">$</span>
+                  <span className="text-gray-300 ml-2">cd bunnyDB && make setup</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">$</span>
+                  <span className="text-gray-300 ml-2">make up</span>
+                </div>
+                <div className="pt-2 border-t border-gray-800">
+                  <span className="text-green-400">✓</span>
+                  <span className="text-gray-400 ml-2">BunnyDB running at</span>
+                  <span className="text-bunny-400 ml-1">localhost:3000</span>
+                </div>
+              </div>
+
+              {/* CTA buttons */}
+              <div className="px-5 pb-5 flex flex-wrap gap-2">
+                <a
+                  href={`${basePath}/docs/self-hosting`}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  Self-Hosting Guide
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </a>
+                <a
+                  href="https://github.com/Harshil-Jani/bunnyDB"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-300 border border-gray-700 rounded-lg hover:border-gray-600 transition-colors"
+                >
+                  <Github className="w-3.5 h-3.5" />
+                  GitHub
+                </a>
+              </div>
+            </div>
           </div>
         </div>
-      </section>
-
-      {/* Live Interactive Demo */}
-      <section className="max-w-5xl mx-auto px-6 pb-20">
-        <DemoAnimation />
       </section>
 
       {/* What BunnyDB does */}
@@ -587,59 +639,6 @@ export default function LandingPage() {
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Self-Host CTA */}
-      <section className="border-t border-gray-100 dark:border-gray-900">
-        <div className="max-w-5xl mx-auto px-6 py-16">
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-gray-900 to-gray-800 dark:from-gray-800 dark:to-gray-900 p-8 md:p-12">
-            <div className="relative z-10">
-              <div className="flex items-center gap-2 mb-4">
-                <Server className="w-5 h-5 text-bunny-400" />
-                <span className="text-sm font-medium text-bunny-400">Self-Hosted</span>
-              </div>
-              <h2 className="text-2xl md:text-3xl font-bold text-white mb-3">
-                Deploy on your infrastructure
-              </h2>
-              <p className="text-gray-400 max-w-xl mb-6">
-                Run BunnyDB on your EC2 instances, local servers, or any Docker host.
-                You own your data, your infrastructure, your uptime.
-              </p>
-              <div className="bg-gray-950/50 rounded-lg p-4 mb-6 font-mono text-sm max-w-md">
-                <div className="flex items-center gap-2 text-gray-500 mb-1">
-                  <Terminal className="w-4 h-4" />
-                  <span>Terminal</span>
-                </div>
-                <div className="text-gray-300">
-                  <span className="text-gray-500">$</span> git clone github.com/Harshil-Jani/bunnyDB<br />
-                  <span className="text-gray-500">$</span> cd bunnyDB && make setup<br />
-                  <span className="text-gray-500">$</span> make up
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <a
-                  href={`${basePath}/docs/self-hosting`}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-white text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-100 transition-colors"
-                >
-                  Self-Hosting Guide
-                  <ArrowRight className="w-4 h-4" />
-                </a>
-                <a
-                  href="https://github.com/Harshil-Jani/bunnyDB"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white border border-gray-600 rounded-lg hover:border-gray-500 transition-colors"
-                >
-                  <Github className="w-4 h-4" />
-                  View on GitHub
-                </a>
-              </div>
-            </div>
-            {/* Background decoration */}
-            <div className="absolute top-0 right-0 w-64 h-64 bg-bunny-500/10 rounded-full blur-3xl" />
-            <div className="absolute bottom-0 left-0 w-48 h-48 bg-bunny-600/10 rounded-full blur-3xl" />
           </div>
         </div>
       </section>
